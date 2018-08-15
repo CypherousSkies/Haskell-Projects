@@ -1,22 +1,19 @@
 module Random.Tree
-        (AccRTree(ARTrunk,ARBranch,ARLeaf)
-        ,foldRTree
+        (RTree(RNode,RLeaf)
+        ,evalTree
         ) where
 
 import Random.Dist
 import System.Random
+import Control.Monad.Random
+import Data.Tree
 
-data AccRTree a = ARTrunk (RDist (a,(AccRTree a)))
-                | ARBranch (a,(RDist a))
-                | ARLeaf a
+data RTree a = RNode (RDist a) (RDist [RTree a])
+	     | RLeaf (RDist a)
 
-foldRTree::RandomGen g => AccRTree a -> b -> g -> (a -> b -> b) -> (b,g)
-foldRTree (ARTrunk d) _ g f = (f x xs,g'')
-        where
-                ((x,t),g') = evalDist d g
-                (xs,g'') = foldRTree xs g'
-foldRTree (ARBranch (x,d)) z g f = (f (f x xs) z,g')
-        where
-                (xs,g') = evalDist d g
-foldRTree (ARLeaf a) z g f = (f a z,g)
-
+evalTree :: RTree a -> Rand g (Tree a)
+evalTree (RLeaf rl)    = liftRand (\g -> (Node (evalRand rl g) [], execRand rl g))
+evalTree (RNode rl rf) = liftRand (\g -> (Node l f, g''))
+	where
+		(l,g')  = runRand rl g
+		(f,g'') = runRand (mapM evalTree rf) g'
