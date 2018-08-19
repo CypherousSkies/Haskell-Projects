@@ -42,13 +42,6 @@ data Bid t = (Tradable t) => Bid {bidder :: Identifier
 				 ,cost :: Money
 				 }
 
-mapRadom :: (a -> b) -> Rand g [a] -> Rand g [b]
-mapRandom f = foldr (\r z -> mapRand (\(i,g) -> (i : (evalRand z g), execRand z g)) r) (liftRand (\g -> ([],g)))
-
-unboxRandom :: [Rand g a] -> Rand g [a]
-unboxRandom []      = liftRand (\g -> ([],g))
-unboxRandom (rx:xs) = liftRand (\g -> (evalRand rx g : $ evalRand (unboxRandom xs) (execRand rx g), execRand (unboxRandom xs) (execRand rx g)))
-
 class (Tradable t) => Agent a t where
 	getID :: a -> Identifier
         getInventory :: a -> Map t Amount
@@ -61,19 +54,21 @@ class (Tradable t) => Agent a t where
 	amountToSell :: a -> t -> Maybe (Rand g (Bid t))
         amountToBuy :: a -> t -> Maybe (Rand g (Bid t))
 	doProduction :: a -> Rand g a
-	doProduction a = do
-				chosenRecipe     <- liftRand (\g -> ((\(fs,r2) -> (fs,evalRand r2 (snd $ next g))) $ head $ sortBy (\r1 r2 -> let f = (\r -> (sum $ map (estimatedValue a) $ evalRand g $ snd r) - (sum $ map (estimatedValue a) $ fst r)) in compare (f r1) (f r2)) possibleRecipes, snd $ next $ snd $ next g))
-				removedReactants <- foldl' (\(t,am) -> adjust (\n -> n - am) t (getInventory a)) (fst chosenRecipe)
-				addProducts      <- foldl' (\(t,am) -> adjust (\n -> n + am) t removedReactants) (snd chosenRecipe)
-				liftRand (\g -> ((\a' -> replaceMoney a' ((getMoney a) - 2)) $ replaceInventory a addProducts, g))
-		where
-			possibleRecipes = filter (\(r,_) -> foldr (\(t,am) z -> z && (am >= $ maybe (am + 1) $ lookup t (getInventory a))) True r) (recipes $ getJob a)
+	doProduction a = do {
+				let possibleRecipes = filter (\(r,_) -> and $ map (\(t,am) -> am >= $ maybe (am + 1) $ lookup t (getInventory a)) r) (recipes $ getJob a) ;
+				guessRecipe <- (\(l,rl) -> fmap (zip l) (sequence rl)) $ unzip possibleRecipes
+				let chosenRecipe = head $ sortBy (\r1 r2 -> let f = (\r -> (sum $ map (estimatedValue a) $ snd r) - (sum $ map (estimatedValue a) $ fst r)) in compare (f r1) (f r2)) guessRecipe ;
+				removedReactants <- foldl' (\(t,am) -> adjust (\n -> n - am) t (getInventory a)) (fst chosenRecipe) ;
+				addProducts      <- foldl' (\(t,am) -> adjust (\n -> n + am) t removedReactants) (snd chosenRecipe) ;
+				return $ (\a' -> replaceMoney a' ((getMoney a) - 2)) $ replaceInventory a addProducts
+			}
 	doTurn :: a -> Rand g (a,[Bid t],[Bid t])
-	doTurn a = do
-			postProd <- doProduction a
-			sells    <- unboxRandom $ mapMaybe (\(k,_) -> amountToSell a k) $ toList (getInventory postProd)
-			buys     <- unboxRandom $ mapMaybe (\(k,_) -> amountToBuy  a k) $ toList (getInventory postProd)
-			liftRand (\g -> ((a,sells,buys),g))
+	doTurn a = do {
+			postProd <- doProduction a ;
+			sells    <- sequence $ mapMaybe (\(k,_) -> amountToSell a k) $ toList (getInventory postProd) ;
+			buys     <- sequence $ mapMaybe (\(k,_) -> amountToBuy  a k) $ toList (getInventory postProd) ;
+			return (a,sells,buys)
+		   }
 
 getByID :: Agent a => [a] -> Identifier -> Maybe a
 getByID [] _ = Nothing
@@ -85,8 +80,6 @@ resolveBids l [] f = resolveBids [] l f
 resolveBids (s:ss) bs f = if (thing s) `elem` $ map thing bs
 			     then (Left ((bidder s, bidder $ head $ filter (\b->(thing b) == (thing s))), f s $ head $ filter (\b -> (thing b) == (thing s)) bs) : resolveBids ss $ bs \\ [head $ filter (\b -> (thing b) == (thing s))]
 			     else (Right (bidder s, s)):(resolveBids ss bs)
-
-rFilter :: Rand g [a] -> (a -> Bool) -> 
 
 class (Tradable t, Agent a t) => ClearingHouse c a t | c -> t where
 	getAgents :: c -> [a]
@@ -102,14 +95,14 @@ class (Tradable t, Agent a t) => ClearingHouse c a t | c -> t where
 	observedMean :: c -> t -> Money
 	doRound :: c -> Rand g c
 	doRound c = do
-			asb <- unboxRandom $ map doTurn $ getAgents c
+			asb <- sequence $ map doTurn $ getAgents c
 			agents <- map (\(a,_,_) -> a) asb
 			sells  <- map (\(a,s,_) -> s) asb
 			buys   <- map (\(a,_,b) -> b) asb
 			sortSells <- sortBy (\s1 s2 -> compare (cost s1) (cost s2)) sells
 			sortBuys  <- reverse $ sortBy (\b1 b2 -> compare (cost b1) (cost b2)) buys
 			resolved  <- resolveBids sortSells sortBuys
-			randResolved <- unboxRandom $ map (\etb -> liftRand (\g -> (either (\r -> evalRand r g) id etb, snd $ next g))) resolved
-			agentResolvedMap <- unboxRandom 
+			randResolved <- sequence $ map (\etb -> liftRand (\g -> (either (\r -> evalRand r g) id etb, snd $ next g))) resolved
+			agentResolvedMap <- sequence 
 			updatedAgents <- map (\a -> foldr (\t a' -> updatePriceBeleifs t a') a $ map () $ filter (either (\((i1,i2),) ) ()) resolved) agents
 			--TODO figure out how to update each agent
