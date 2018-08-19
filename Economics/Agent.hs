@@ -58,8 +58,8 @@ class (Tradable t) => Agent a t where
 				let possibleRecipes = filter (\(r,_) -> and $ map (\(t,am) -> am >= $ maybe (am + 1) $ lookup t (getInventory a)) r) (recipes $ getJob a) ;
 				guessRecipe <- (\(l,rl) -> fmap (zip l) (sequence rl)) $ unzip possibleRecipes
 				let chosenRecipe = head $ sortBy (\r1 r2 -> let f = (\r -> (sum $ map (estimatedValue a) $ snd r) - (sum $ map (estimatedValue a) $ fst r)) in compare (f r1) (f r2)) guessRecipe ;
-				removedReactants <- foldl' (\(t,am) -> adjust (\n -> n - am) t (getInventory a)) (fst chosenRecipe) ;
-				addProducts      <- foldl' (\(t,am) -> adjust (\n -> n + am) t removedReactants) (snd chosenRecipe) ;
+				removedReactants <- foldl' (\inv (t,am) -> adjust (\n -> n - am) t inv) (getInventory a) (fst chosenRecipe) ;
+				addProducts      <- foldl' (\inv (t,am) -> adjust (\n -> n + am) t inv) removedReactants (snd chosenRecipe) ;
 				return $ (\a' -> replaceMoney a' ((getMoney a) - 2)) $ replaceInventory a addProducts
 			}
 	doTurn :: a -> Rand g (a,[Bid t],[Bid t])
