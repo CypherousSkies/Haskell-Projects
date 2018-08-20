@@ -2,7 +2,6 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE InstanceSigs #-}
 
 module Economics.Agent
 	(Money
@@ -37,6 +36,8 @@ data Transaction t = forall t . (Tradable t) => Transaction { seller :: Identifi
                                                  , quantity :: Amount
                                                  , unit_price :: Money
                                                  }
+instance (Tradable t) => Eq (Transaction t) where
+	(Transaction s1 b1 i1 q1 u1) == (Transaction s2 b2 i2 q2 u2) = (s1 == s2) && (b1 == b2) && (i1 == (i2 `asTypeOf` i1)) && (q1 == q2) && (u1 == u2)
 
 data Bid t = forall t . (Tradable t) => Bid { bidder :: Identifier
 				 , thing :: t
