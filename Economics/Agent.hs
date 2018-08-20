@@ -2,6 +2,7 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE InstanceSigs #-}
 
 module Economics.Agent
 	(Money
@@ -10,8 +11,9 @@ module Economics.Agent
 	,Identifier
 	,Tradable
 	,Transaction(Transaction)
+	,Bid(Bid)
 	,Agent
-	,ClearingHouse
+	--,ClearingHouse
 	) where
 
 import Control.Monad.Random
@@ -42,6 +44,22 @@ data Bid t = forall t . (Tradable t) => Bid { bidder :: Identifier
 				 , cost :: Money
 				 }
 
+adjust :: Eq k => (v -> v) -> k -> [(k,v)] -> [(k,v)]
+adjust f k [] = []
+adjust f k ((k1,v1):ms) = if k == k1 then (k1,f v1):ms else (k1,v1):(adjust f k ms)
+
+thingf :: Rand g Money -> Amount -> Rand g Money
+thingf rm am = fmap (\x -> x * (fromIntegral am)) rm
+
+recSide :: (t -> Rand g Money) -> [(t,Amount)] -> Rand g Money
+recSide est thing = fmap sum (mapM (\(t,am) -> thingf (est t) am) thing)
+
+recVal :: (t -> Rand g Money) -> ([(t,Amount)],[(t,Amount)]) -> Rand g Money
+recVal est (reac,prod) = liftM2 (\r p -> p - r) (recSide est reac) (recSide est prod)
+
+netValue :: (t -> Rand g Money) -> [([(t,Amount)],[(t,Amount)])] -> Rand g [Money]
+netValue est = mapM (recVal est)
+
 class (Tradable t) => Agent a t | a -> t where
 	getID :: a -> Identifier
         getInventory :: a -> [(t,Amount)]
@@ -56,30 +74,36 @@ class (Tradable t) => Agent a t | a -> t where
 	doProduction :: a -> Rand g a
 	doProduction a = do { let possibleRecipes = filter (\(r,_) -> and $ map (\(t,am) -> maybe False (\v -> am >= v) (lookup t (getInventory a))) r) (recipes $ getJob a)
 			; guessRecipe <- (\(l,rl) -> fmap (zip l) (sequence rl)) $ unzip possibleRecipes
-			; let compareRecipe = (\r1 r2 -> 
-			; let chosenRecipe = head $ sortBy (\r1 r2 -> let f = (\r -> (sum $ map (\t -> estimateValue a t) $ snd r) - (sum $ map (\t -> estimateValue a t) $ fst r)) in compare (f r1) (f r2)) guessRecipe
-			; removedReactants <- foldl' (\inv (t,am) -> adjust (\n -> n - am) t inv) (getInventory a) (fst chosenRecipe)
-			; addProducts      <- foldl' (\inv (t,am) -> adjust (\n -> n + am) t inv) removedReactants (snd chosenRecipe)
+			; valueRecipe <- netValue (estimateValue a) guessRecipe
+			; let recAndVal = zip valueRecipe guessRecipe
+			; let chosenRecipe = snd $ head $ sortBy (\(v1,_) (v2,_) -> compare v1 v2) recAndVal
+			; let removedReactants = foldl' (\inv (t,am) -> adjust (\n -> n - am) t inv) (getInventory a) (fst chosenRecipe)
+			; let addProducts      = foldl' (\inv (t,am) -> adjust (\n -> n + am) t inv) removedReactants (snd chosenRecipe)
 			; return $ (\a' -> replaceMoney a' ((getMoney a) - 2)) $ replaceInventory a addProducts }
 	doTurn :: a -> Rand g (a,[Bid t],[Bid t])
 	doTurn a = do {
 			postProd <- doProduction a ;
-			sells    <- sequence $ mapMaybe (\(k,_) -> amountToSell a k) $ toList (getInventory postProd) ;
-			buys     <- sequence $ mapMaybe (\(k,_) -> amountToBuy  a k) $ toList (getInventory postProd) ;
+			sells    <- sequence $ mapMaybe (\(k,_) -> amountToSell a k) $ getInventory postProd ;
+			buys     <- sequence $ mapMaybe (\(k,_) -> amountToBuy  a k) $ getInventory postProd ;
 			return (a,sells,buys)
 	       		}
 
 getByID :: (Tradable t, Agent a t) => [a] -> Identifier -> Maybe a
 getByID [] _ = Nothing
-getByID (x:xs) i = if (getID x) == i then x else getByID xs i
+getByID (x:xs) i = if (getID x) == i then Just x else getByID xs i
 
-resolveBids :: [Bid t] -> [Bid t] -> (Bid t -> Bid t -> (Rand g (Transaction t), Maybe (Bid t, Bool))) -> [Either ((Identifier, Identifier), Rand g (Transaction t)) (Identifier, Bid t)]
+resolveBids :: Tradable t => [Bid t] -> [Bid t] -> (Bid t -> Bid t -> (Rand g (Transaction t), Maybe (Bid t, Bool))) -> [Either ((Identifier, Identifier), Rand g (Transaction t)) (Identifier, Bid t)]
 resolveBids [] l _ = map (\b -> Right (bidder b, b)) l
-resolveBids l [] f = resolveBids [] l
-resolveBids (s:ss) bs f = if (thing s) `elem` (map thing bs)
-			     then let (rtrans, mbb) = f s $ head $ filter (\b -> (thing b) == (thing s)) bs in (Left ((bidder s, bidder $ head $ filter (\b->(thing b) == (thing s))), rtrans)) : ((\(s',b') -> resolveBids s' b' f) $ (\s' b' -> (s',b' \\ [head $ filter (\b -> (thing b) == (thing s))])) (maybe (\(bid,isSell) -> if isSell then bid:ss else ss) ss mbb) (maybe (\(bid,isSell) -> if isSell then bs else bid:bs) bs mbb))
-			     else (Right (bidder s, s)):(resolveBids ss bs f)
-
+resolveBids l [] f = resolveBids [] l f
+resolveBids (s:ss) bs f = if elem (thing' s) (map thing' bs)
+			     then let buy = head $ filter (\b -> (thing' b) == (thing' s)) bs 
+		 		      (rtrans, mbb) = f s buy
+	      			  in (Left ((bidder' s, bidder' buy), rtrans)) : ((\(s',b') -> resolveBids s' b' f) $ (\s' b' -> (s',b' \\ [buy])) (maybe ss (\(bid,isSell) -> if isSell then bid:ss else ss) mbb) (maybe bs (\(bid,isSell) -> if isSell then bs else bid:bs) mbb))
+			     else (Right (bidder' s, s)):(resolveBids ss bs f)
+			where
+				thing' = (\Bid{ thing = that } -> that) :: Bid t -> t
+				bidder' = (\Bid{ bidder = bid} -> bid) :: Bid t -> Identifier
+				     {-
 updateAgents :: (Tradable t, Agent a t) => t -> [Either ((Identifier, Identifier), (Transaction t)) (Identifier, Bid t)] -> [a] -> Rand g [a]
 updateAgents etbs as = mapM (\a -> foldM (\etb a' -> updatePriceBeleifs a' etb) a $ filter (either (\((i1,i2),_) -> (i1 == (getID a)) || (i2 == (getID a))) (\(i,_) -> i == (getID a))) etbs) as
 
@@ -106,7 +130,8 @@ class (Tradable t, Agent a t) => ClearingHouse c a t | c -> t, c -> a where
 			; let resolved  = resolveBids sortSells sortBuys (haggle c)
 			; randResolved <- (sequence $ foldM (\bt bts -> (either (\(p,rt) -> liftRand (\g -> (Left (p,evalRand rt g),execRand rt g))) (\r -> return (Right r))) : bts) [] resolved) :: Rand g [Either ((Identifier, Identifier), Transaction t) (Identifier, Bid t)]
 			; updatedAgents <- mapM (\a -> foldM (\etb a' -> updatePriceBeleifs a' etb) a $ filter (either (\((i1,i2),_) -> (i1 == (getID a)) || (i2 == (getID a))) (\(i,_) -> i == (getID a))) randResolved) agents
-			; let transactions = map snd $ lefts resolved
+			; transactions <- sequence $ map snd $ lefts resolved
    			; let excessDemand = map (\t -> (t, (sum $ map number $ filter (\bid -> t == (thing bid)) buys) - (sum $ map number $ filter (\bid -> t == (thing bid)) sells))) $ nub $ map thing (buys ++ sells)
       			; let newAgents    = map (\a -> if (getMoney a) <= 0 then replaceAgent excessDemand else a)
 			; return $ updateHouse c newAgents transactions }
+-}
