@@ -89,18 +89,19 @@ getByID :: (Tradable t, Agent a t) => [a] -> Identifier -> Maybe a
 getByID [] _ = Nothing
 getByID (x:xs) i = if (getID x) == i then Just x else getByID xs i
 
-resolveBids :: Tradable t => [Bid t] -> [Bid t] -> (Bid t -> Bid t -> (Rand g (Transaction t), Maybe (Bid t, Bool))) -> [Either (Rand g (Transaction t)) (Bid t)]
-resolveBids [] l _ = map (\b -> Right b) l
+resolveBids :: Tradable t => [Bid t] -> [Bid t] -> (Bid t -> Bid t -> (Rand g (Transaction t), Maybe (Bid t, Bool))) -> Rand g [Either (Transaction t) (Bid t)]
+resolveBids [] l _ = mapM (\b -> return (Right b)) l
 resolveBids l [] f = resolveBids [] l f
 resolveBids (s:ss) bs f = if elem (thing s) (map thing bs)
                              then do { let buy = head $ filter (\b -> (thing b) == (thing s)) bs
                                      ; let (rtrans, mbb) = f s buy
                                      ; let ss' = maybe ss (\(bid,isSell) -> if isSell then bid:ss else ss) mbb
-                                     ; let bs' = maybe ss (\(bid,isSell) -> if isSell then bs else bid:bs) mbb
-                                     ; let bids' = (\(s',b') -> resolveBids s' b' f) $ (\s' b' -> (s',b' \\ [buy])) ss' bs'
-                                     ; (Left rtrans) : bids'
+                                     ; let bs' = (maybe ss (\(bid,isSell) -> if isSell then bs else bid:bs) mbb) \\ [buy]
+                                     ; bids' <- resolveBids ss' bs' f
+                                     ; rt <- rtrans
+                                     ; return $ (Left rt) : bids'
                                      }
-                             else (Right s):(resolveBids ss bs f)
+                             else (resolveBids ss bs f) >>= (\bids' -> return $ (Right s) : bids')
 
 updateAgents :: (Tradable t, Agent a t) => [Either (Transaction t) (Bid t)] -> [a] -> Rand g [a]
 updateAgents etbs as = mapM (\a -> do { let filtered = filter (either (\t -> ((seller t) == (getID a)) || ((buyer t) == (getID a))) (\b -> (bidder b) == (getID a))) etbs
@@ -124,17 +125,17 @@ class (Tradable t, Agent a t) => ClearingHouse c a t | c -> t, c -> a where
         updateHouse :: c -> [a] -> [Transaction t] -> c
         lastMean :: c -> t -> Money
         lastMean c t = turnMean t $ head $ tradeHistory c
-        observedMean :: c -> t -> Money
         replaceAgent :: c -> [(t,Amount)] -> Rand g a
         doRound :: c -> Rand g c
         doRound c = do { asbp <- mapM doTurn $ getAgents c
                         ; let (agents,sells,buys) = (\(as,sl,bl) -> (as, concat sl, concat bl)) $ unzip3 asbp
                         ; let sortSells = sortBy (\s1 s2 -> compare (cost s1) (cost s2)) sells
                         ; let sortBuys  = reverse $ sortBy (\b1 b2 -> compare (cost b1) (cost b2)) buys
-                        ; let resolved  = resolveBids sortSells sortBuys (haggle c)
-                        ; randResolved <- foldM (\bt bts -> (either (\(p,rt) -> liftRand (\g -> (Left (p,evalRand rt g),execRand rt g))) (\r -> return (Right r))) : bts) [] resolved -- :: Rand g [Either ((Identifier, Identifier), Transaction t) (Identifier, Bid t)]
-                        ; updatedAgents <- mapM (\a -> foldM (\etb a' -> updatePriceBeleifs a' etb) a $ filter (either (\((i1,i2),_) -> (i1 == (getID a)) || (i2 == (getID a))) (\(i,_) -> i == (getID a))) randResolved) agents
-                        ; transactions <- sequence $ map snd $ lefts resolved
-                           ; let excessDemand = map (\t -> (t, (sum $ map number $ filter (\bid -> t == (thing bid)) buys) - (sum $ map number $ filter (\bid -> t == (thing bid)) sells))) $ nub $ map thing (buys ++ sells)
-                              ; let newAgents    = map (\a -> if (getMoney a) <= 0 then replaceAgent excessDemand else a)
-                        ; return $ updateHouse c newAgents transactions }
+                        ; resolved  <- resolveBids sortSells sortBuys (haggle c)
+                        -- ; randResolved <- mapM (\bt -> either (\rt -> (rt >>= (\t -> Left t)) :: Rand g (Either (Transaction t) (Bid t))) (\r -> (return (Right r)) :: Rand g (Either (Transaction t) (Bid t))) bt) resolved
+                        ; updatedAgents <- updateAgents resolved agents
+                        ; let transactions = lefts resolved
+                        ; let excessDemand = map (\t -> (t, (sum $ map number $ filter (\bid -> t == (thing bid)) buys) - (sum $ map number $ filter (\bid -> t == (thing bid)) sells))) $ nub $ map thing (buys ++ sells)
+                        ; newAgents <- mapM (\a -> if (getMoney a) <= 0 then replaceAgent c excessDemand else return a) updatedAgents
+                        ; return $ updateHouse c newAgents transactions
+                        }
