@@ -13,7 +13,7 @@ create ins (out,n) = [(ins, return [(out,n)]),(ins, toolUsed [(out, 2 * n)])]
 
 refine :: [(Commodity,Amount)] -> Commodity -> (Commodity,Amount) -> Amount -> Amount -> Rand g [(Commodity,Amount)]
 refine base limiting (out,ratio) maxWOTool max = let woTool = map (\n -> ((limiting,n):base,return [(out,ratio * n)])) [1..maxWOTool]
-                                                     wTool  = map (\n -> ((limiting,n):(Tool,1):base,toolUsed [(out,ratio * n)]) [1..max]
+                                                     wTool  = map (\n -> ((limiting,n):(Tool,1):base,toolUsed [(out,ratio * n)]) [1..max])
                                                  in woTool ++ wTool
 
 data Commodity = Food | Wood | Ore | Metal | Tool deriving (Show, Read, Eq)
@@ -31,6 +31,10 @@ job Ore   = "Miner"
 job Metal = "Refiner"
 job Wood  = "Lumberjack"
 job Tool  = "Blacksmith"
+                                                                  
+lookup :: Eq k => k -> [(k,v)] -> Maybe v
+lookup _ [] = Nothing
+lookup k ((k1,v):ks) = if k == k1 then Just v else (lookup k ks)
 
 changeRange :: Double -> (Money,Money) -> Money
 changeRange p (a,b) = (a - p * 0.5 * (b - a), b + p * 0.5 * (b - a)) 
@@ -54,27 +58,29 @@ extractInv (Inventory inv) = inv
 allComs :: [Commodity]
 allComs = [Food, Wood, Ore, Metal, Tools]
 
-data Person = Person {ident :: Identifier
-		     ,inv :: Inventory Commodity
-		     ,price_ranges :: HashMap Commodity (Money,Money)
-		     ,job :: Commodity
-		     ,money :: Money
-		     ,market :: Market
-		     }
-instance Agent Person Jobs Commodities where
+type Inventory = [(Commodity,Amount)]
+
+data Person = Person { ident :: Identifier
+		             , inv :: Inventory
+		             , price_ranges :: [(Commodity,(Money,Money))]
+		             , job :: Commodity
+		             , money :: Money
+		             , market :: Market
+		             }
+instance Agent Person Commodities where
 	getID = ident
 	getInventory = inv
 	spaceInInventory inv = 20 - (inventoryMass inv)
 	getJob = job
 	getMoney = money 
-	updatePriceBeleifs (Person id inv ranges job money market) (Left (Transaction _ _ item _ _)) = return (Person id inv (update (\r ->Just (succSell r)) ranges item price_ranges) job money market)
+    updatePriceBeleifs (Person id inv ranges job money market) (Left (Transaction{ item = item'})) = return (Person id inv (update (\r -> Just (succSell r)) ranges item' price_ranges) job money market)
 	updatePriceBeleifs (Person id inv ranges job money market) (Right (Bid item Amount Money)) = return (Person id inv (update (\r -> Just (failToSell (lastMean market) r)) item price_ranges) job money market)
 	amountToSell (Person _ inv ranges job _ market) item  = if (item `elem` (map fst (needs job))) && (not (member ranges item))
-							    	then return Nothing
-								else return (Just (Bid item (ceiling ((favorability (lookup ranges item) (lastMean market item)) * (amountOf inv item))) (maybe 1 snd (lookup ranges item))))
-	amountToBuy (Person _ inv ranges job money market) item  = if (item `elem` (makes job))
-							   	then return Nothing
-							   	else return (Just (Bid item ((\max -> return (floor ((max - (favorability (lookup ranges item) (lastMean market iteem))) * (spaceInInventory )))) (if item `elem` (map fst (needs job)) then 1 else (money / (2 * price)))) price))
+							    	                            then return Nothing
+								                                else return (Just (Bid item (ceiling ((favorability (lookup ranges item) (lastMean market item)) * (amountOf inv item))) (maybe 1 snd (lookup ranges item))))
+	amountToBuy (Person _ inv ranges job money market) item  = return $ if (item `elem` (makes job))
+							   	                                            then Nothing
+							   	                                            else (Just (Bid item ((\max -> return (floor ((max - (favorability (lookup ranges item) (lastMean market iteem))) * (spaceInInventory )))) (if item `elem` (map fst (needs job)) then 1 else (money / (2 * price)))) price))
 									where
 										price = (maybe 1 fst (lookup ranges item)) 
  
