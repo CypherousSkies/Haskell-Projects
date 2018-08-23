@@ -14,6 +14,7 @@ module Economics.Agent
               ,getJob
               ,getMoney
               ,replaceMoney
+              ,replaceInventory
               ,updatePriceBeleifs
               ,estimateValue
               ,amountToSell

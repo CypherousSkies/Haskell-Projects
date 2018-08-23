@@ -1,15 +1,20 @@
+{-# LANGUAGE MultiParamTypeClasses #-}
+
 import Economics.Agent
 import Random.Dist
 import Libs.AssList
 import Control.Monad.Random
 
-toolUsed :: [(Commodity,Amount)] -> Rand g [(Commodity,Amount)]
+type Components = [(Commodity, Amount)]
+type Recipe g = (Components, Rand g Components)
+
+toolUsed :: Components -> Rand g Components
 toolUsed woTool = mkDist [((Tool,1):woTool, 0.9),(woTool,0.1)]
 
-create :: [(Commodity,Amount)] -> (Commodity,Amount) -> Rand g [(Commodity,Amount)]
-create ins (out,n) = [(ins, return [(out,n)]),(ins, toolUsed [(out, 2 * n)])]
+create :: Components -> (Commodity,Amount) -> Recipe g
+create ins (out,n) = (ins, return $ [(out,n)]):(ins, toolUsed $ [(out, 2 * n)]):[]
 
-refine :: [(Commodity,Amount)] -> Commodity -> (Commodity,Amount) -> Amount -> Amount -> Rand g [(Commodity,Amount)]
+refine :: Components -> Commodity -> (Commodity,Amount) -> Amount -> Amount -> Recipe g
 refine base limiting (out,ratio) maxWOTool max = let woTool = map (\n -> ((limiting,n):base,return [(out,ratio * n)])) [1..maxWOTool]
                                                      wTool  = map (\n -> ((limiting,n):(Tool,1):base,toolUsed [(out,ratio * n)]) [1..max])
                                                  in woTool ++ wTool
@@ -53,6 +58,8 @@ upb :: a -> Either (Transaction t) (Bid t) -> Rand g a
 upb (Person id inv ranges job money market) (Left (Transaction _ _ item _ _)) = return $ Person id inv (update (\r -> Just (succSell r)) ranges item price_ranges) job money market
 upb (Person id inv ranges job money market) (Right (Bid item amount _)) = return $ Person id inv (update (\r -> Just (failToSell (lastMean market) r)) item  price_ranges) job money market
 
+spaceInInventory inv = 20 - (inventoryMass inv)
+
 type Inventory = AssList Commodity Amount
 
 data Person = Person { ident :: Identifier
@@ -65,13 +72,12 @@ data Person = Person { ident :: Identifier
 
 instance Agent Person Commodity where
 	getID a = ident a
-	getInventory a = inv a
-	spaceInInventory inv = 20 - (inventoryMass inv)
-    replaceInventory (Person id _ pr j mon mar) inv = Person id inv pr j mon mar
+	getInventory a = inv a 
 	getJob a = job a
 	getMoney a = money a
-    replaceMoney (Person id inv pr j mon mar) m = Person id inv pr j (mon + m) mar 
-    updatePriceBeleifs = upb
+    --replaceInventory (Person id _ pr j mon mar) inv = Person id inv pr j mon mar 
+    --replaceMoney (Person id inv pr j _ mar) money = Person id inv pr j money mar 
+    --updatePriceBeleifs = upb
 	amountToSell (Person _ inv ranges job _ market) item  = if (item `elem` (map fst (needs job))) && (not (member ranges item))
 							    	                            then return Nothing
 								                                else return (Just (Bid item (ceiling ((favorability (lookup ranges item) (lastMean market item)) * (amountOf inv item))) (maybe 1 snd (lookup ranges item))))
@@ -80,3 +86,6 @@ instance Agent Person Commodity where
 							   	                                            else (Just (Bid item ((\max -> return (floor ((max - (favorability (lookup ranges item) (lastMean market iteem))) * (spaceInInventory )))) (if item `elem` (map fst (needs job)) then 1 else (money / (2 * price)))) price))
 									where
 										price = (maybe 1 fst (lookup ranges item))
+
+data Market = Market
+instance ClearingHouse Market Person Commodity
