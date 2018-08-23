@@ -1,9 +1,6 @@
 import Economics.Agent
 import Random.Dist
-
-adjust :: Eq k => (v -> v) -> k -> [(k,v)] -> [(k,v)]
-adjust _ _ [] = []
-adjust f k ((k1,v1):ks) = if k == k1 then (k1,f v1):ks else adjust f k ks
+import Libs.AssList
 
 toolUsed :: [(Commodity,Amount)] -> Rand g [(Commodity,Amount)]
 toolUsed woTool = mkDist [((Tool,1):woTool, 0.9),(woTool,0.1)]
@@ -31,10 +28,6 @@ job Ore   = "Miner"
 job Metal = "Refiner"
 job Wood  = "Lumberjack"
 job Tool  = "Blacksmith"
-                                                                  
-lookup :: Eq k => k -> [(k,v)] -> Maybe v
-lookup _ [] = Nothing
-lookup k ((k1,v):ks) = if k == k1 then Just v else (lookup k ks)
 
 changeRange :: Double -> (Money,Money) -> Money
 changeRange p (a,b) = (a - p * 0.5 * (b - a), b + p * 0.5 * (b - a)) 
@@ -58,11 +51,11 @@ extractInv (Inventory inv) = inv
 allComs :: [Commodity]
 allComs = [Food, Wood, Ore, Metal, Tools]
 
-type Inventory = [(Commodity,Amount)]
+type Inventory = AssList Commodity Amount
 
 data Person = Person { ident :: Identifier
 		             , inv :: Inventory
-		             , price_ranges :: [(Commodity,(Money,Money))]
+		             , price_ranges :: AssList Commodity (Money,Money)
 		             , job :: Commodity
 		             , money :: Money
 		             , market :: Market
@@ -74,7 +67,7 @@ instance Agent Person Commodities where
 	getJob = job
 	getMoney = money 
     updatePriceBeleifs (Person id inv ranges job money market) (Left (Transaction{ item = item'})) = return (Person id inv (update (\r -> Just (succSell r)) ranges item' price_ranges) job money market)
-	updatePriceBeleifs (Person id inv ranges job money market) (Right (Bid item Amount Money)) = return (Person id inv (update (\r -> Just (failToSell (lastMean market) r)) item price_ranges) job money market)
+	updatePriceBeleifs (Person id inv ranges job money market) (Right (Bid item amount money)) = return (Person id inv (update (\r -> Just (failToSell (lastMean market) r)) item price_ranges) job money market)
 	amountToSell (Person _ inv ranges job _ market) item  = if (item `elem` (map fst (needs job))) && (not (member ranges item))
 							    	                            then return Nothing
 								                                else return (Just (Bid item (ceiling ((favorability (lookup ranges item) (lastMean market item)) * (amountOf inv item))) (maybe 1 snd (lookup ranges item))))

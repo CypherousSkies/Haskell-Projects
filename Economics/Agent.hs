@@ -18,6 +18,7 @@ import Data.Either
 import Data.List
 import Data.Maybe
 import System.Random
+import Libs.AssList
 
 type Money  = Double
 type Mass   = Double
@@ -40,10 +41,6 @@ data Bid t = Bid { bidder :: Identifier
                  , number :: Amount
                  , cost :: Money
                  } deriving Eq
-
-adjust :: Eq k => (v -> v) -> k -> [(k,v)] -> [(k,v)]
-adjust f k [] = []
-adjust f k ((k1,v1):ms) = if k == k1 then (k1,f v1):ms else (k1,v1):(adjust f k ms)
 
 thingf :: Rand g Money -> Amount -> Rand g Money
 thingf rm am = fmap (\x -> x * (fromIntegral am)) rm

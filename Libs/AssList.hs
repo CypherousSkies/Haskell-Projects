@@ -1,4 +1,4 @@
-module Libs.Asslist
+module Libs.AssList
     (AssList
     ,lookup
     ,adjust
