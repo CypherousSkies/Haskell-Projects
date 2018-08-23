@@ -6,11 +6,26 @@ module Economics.Agent
         ,Mass
         ,Amount
         ,Identifier
-        ,Tradable
+        ,Tradable(unit_mass,recipes)
         ,Transaction(Transaction)
         ,Bid(Bid)
-        ,Agent
-        ,ClearingHouse
+        ,Agent(getID
+              ,getInventory
+              ,getJob
+              ,getMoney
+              ,replaceMoney
+              ,updatePriceBeleifs
+              ,estimateValue
+              ,amountToSell
+              ,amountToBuy
+              )
+        ,ClearingHouse(getAgents
+                      ,haggle
+                      ,defaultPrice
+                      ,tradeHistory
+                      ,updateHouse
+                      ,replaceAgent
+                      )
         ) where
 
 import Control.Monad.Random

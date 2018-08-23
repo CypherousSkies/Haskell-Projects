@@ -1,6 +1,7 @@
 import Economics.Agent
 import Random.Dist
 import Libs.AssList
+import Control.Monad.Random
 
 toolUsed :: [(Commodity,Amount)] -> Rand g [(Commodity,Amount)]
 toolUsed woTool = mkDist [((Tool,1):woTool, 0.9),(woTool,0.1)]
@@ -22,12 +23,15 @@ instance Tradable Commodity where
         recipes Wood  = create [(Food,1)] (Wood, 2)
         recipes Tool  = map (\n -> ([(Metal,n),(Food,1)],[(Tool,n)])) [1..20]
 
-job :: Commodity -> String
-job Food  = "Farmer"
-job Ore   = "Miner"
-job Metal = "Refiner"
-job Wood  = "Lumberjack"
-job Tool  = "Blacksmith"
+showjob :: Commodity -> String
+showjob Food  = "Farmer"
+showjob Ore   = "Miner"
+showjob Metal = "Refiner"
+showjob Wood  = "Lumberjack"
+showjob Tool  = "Blacksmith"
+
+needs :: Commodity -> [(Commodity,Amount)]
+needs c = fst $ head $ recipes c
 
 changeRange :: Double -> (Money,Money) -> Money
 changeRange p (a,b) = (a - p * 0.5 * (b - a), b + p * 0.5 * (b - a)) 
@@ -45,11 +49,9 @@ favorability :: Maybe (Money, Money) -> Money -> Double
 favorability (Just (a,b)) = logistic ((b + a)/2) ((a - b)/(2 * (log ((1/0.95) - 1))))
 favorability Nothing _ = 0
 
-extractInv :: Inventory Commodity -> [(Commodity,Amount)]
-extractInv (Inventory inv) = inv
-
-allComs :: [Commodity]
-allComs = [Food, Wood, Ore, Metal, Tools]
+upb :: a -> Either (Transaction t) (Bid t) -> Rand g a
+upb (Person id inv ranges job money market) (Left (Transaction _ _ item _ _)) = return $ Person id inv (update (\r -> Just (succSell r)) ranges item price_ranges) job money market
+upb (Person id inv ranges job money market) (Right (Bid item amount _)) = return $ Person id inv (update (\r -> Just (failToSell (lastMean market) r)) item  price_ranges) job money market
 
 type Inventory = AssList Commodity Amount
 
@@ -60,14 +62,16 @@ data Person = Person { ident :: Identifier
 		             , money :: Money
 		             , market :: Market
 		             }
-instance Agent Person Commodities where
-	getID = ident
-	getInventory = inv
+
+instance Agent Person Commodity where
+	getID a = ident a
+	getInventory a = inv a
 	spaceInInventory inv = 20 - (inventoryMass inv)
-	getJob = job
-	getMoney = money 
-    updatePriceBeleifs (Person id inv ranges job money market) (Left (Transaction{ item = item'})) = return (Person id inv (update (\r -> Just (succSell r)) ranges item' price_ranges) job money market)
-	updatePriceBeleifs (Person id inv ranges job money market) (Right (Bid item amount money)) = return (Person id inv (update (\r -> Just (failToSell (lastMean market) r)) item price_ranges) job money market)
+    replaceInventory (Person id _ pr j mon mar) inv = Person id inv pr j mon mar
+	getJob a = job a
+	getMoney a = money a
+    replaceMoney (Person id inv pr j mon mar) m = Person id inv pr j (mon + m) mar 
+    updatePriceBeleifs = upb
 	amountToSell (Person _ inv ranges job _ market) item  = if (item `elem` (map fst (needs job))) && (not (member ranges item))
 							    	                            then return Nothing
 								                                else return (Just (Bid item (ceiling ((favorability (lookup ranges item) (lastMean market item)) * (amountOf inv item))) (maybe 1 snd (lookup ranges item))))
@@ -75,19 +79,4 @@ instance Agent Person Commodities where
 							   	                                            then Nothing
 							   	                                            else (Just (Bid item ((\max -> return (floor ((max - (favorability (lookup ranges item) (lastMean market iteem))) * (spaceInInventory )))) (if item `elem` (map fst (needs job)) then 1 else (money / (2 * price)))) price))
 									where
-										price = (maybe 1 fst (lookup ranges item)) 
- 
-
-mean :: [(Money,Double)] -> Money
-mean [] = 0
-mean ((x,p):xs) = (((x * p) + (pn * (mean xs))) / (p + pn)
-	where
-		pn = (sum . map (\(_,p) -> p)) xs
-
-lmean :: [Money] -> Money
-lmean l = (sum l) / (length xs)
-
-turnMean :: Commodities -> Market -> Money
-turnMean t = mean . map (\trade -> (unit_price trade, quantity trade)) . filter (\trade -> t == (item trade))  
-
-
+										price = (maybe 1 fst (lookup ranges item))
