@@ -10,7 +10,7 @@ module Economics.Agent
         ,Transaction(Transaction)
         ,Bid(Bid)
         ,Agent
-        --,ClearingHouse
+        ,ClearingHouse
         ) where
 
 import Control.Monad.Random
@@ -132,7 +132,6 @@ class (Tradable t, Agent a t) => ClearingHouse c a t | c -> t, c -> a where
                         ; let sortSells = sortBy (\s1 s2 -> compare (cost s1) (cost s2)) sells
                         ; let sortBuys  = reverse $ sortBy (\b1 b2 -> compare (cost b1) (cost b2)) buys
                         ; resolved  <- resolveBids sortSells sortBuys (haggle c)
-                        -- ; randResolved <- mapM (\bt -> either (\rt -> (rt >>= (\t -> Left t)) :: Rand g (Either (Transaction t) (Bid t))) (\r -> (return (Right r)) :: Rand g (Either (Transaction t) (Bid t))) bt) resolved
                         ; updatedAgents <- updateAgents resolved agents
                         ; let transactions = lefts resolved
                         ; let excessDemand = map (\t -> (t, (sum $ map number $ filter (\bid -> t == (thing bid)) buys) - (sum $ map number $ filter (\bid -> t == (thing bid)) sells))) $ nub $ map thing (buys ++ sells)

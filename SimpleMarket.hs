@@ -1,52 +1,36 @@
 import Economics.Agent
-import Data.HashMap.Lazy
+import Random.Dist
 
-data Commodities = Food | Wood | Ore | Metal | Tool deriving (Show, Read, Eq)
-instance Tradable Commodities where
+adjust :: Eq k => (v -> v) -> k -> [(k,v)] -> [(k,v)]
+adjust _ _ [] = []
+adjust f k ((k1,v1):ks) = if k == k1 then (k1,f v1):ks else adjust f k ks
+
+toolUsed :: [(Commodity,Amount)] -> Rand g [(Commodity,Amount)]
+toolUsed woTool = mkDist [((Tool,1):woTool, 0.9),(woTool,0.1)]
+
+create :: [(Commodity,Amount)] -> (Commodity,Amount) -> Rand g [(Commodity,Amount)]
+create ins (out,n) = [(ins, return [(out,n)]),(ins, toolUsed [(out, 2 * n)])]
+
+refine :: [(Commodity,Amount)] -> Commodity -> (Commodity,Amount) -> Amount -> Amount -> Rand g [(Commodity,Amount)]
+refine base limiting (out,ratio) maxWOTool max = let woTool = map (\n -> ((limiting,n):base,return [(out,ratio * n)])) [1..maxWOTool]
+                                                     wTool  = map (\n -> ((limiting,n):(Tool,1):base,toolUsed [(out,ratio * n)]) [1..max]
+                                                 in woTool ++ wTool
+
+data Commodity = Food | Wood | Ore | Metal | Tool deriving (Show, Read, Eq)
+instance Tradable Commodity where
         unit_mass _ = 1
+        recipes Food  = create [(Wood,1)] (Food,2)
+        recipes Ore   = create [(Food,1)] (Ore,2)
+        recipes Metal = refine [(Food,1)] Ore (Metal,1) 2 20
+        recipes Wood  = create [(Food,1)] (Wood, 2)
+        recipes Tool  = map (\n -> ([(Metal,n),(Food,1)],[(Tool,n)])) [1..20]
 
-toolUsed::(RandomGen g) => Inventory Commodities -> Rand g (Inventory Commodities)
-toolUsed inv = if (amountOf Tool inv) <= 0
-                  then return inv
-                  else do
-                          p <- getRandomR (0.0,1.0) :: (RandomGen g) => Rand g Double
-                          return (if (p > 0.9) then subFromInv (Tool,1) inv else inv)
-
-data Jobs = Farmer | Miner | Refiner | Lumberjack | Blacksmith deriving (Show, Read, Eq)
-instance Occupation Jobs Commodities where
-        needs Farmer = [(Wood,1)]
-        needs Miner = [(Food,1)]
-        needs Refiner = [(Ore,1),(Food,1)]
-        needs Lumberjack = [(Food,1)]
-        needs Blacksmith = [(Metal,1),(Food,1)]
-        makes Farmer = [Food]
-        makes Miner = [Ore]
-        makes Refiner = [Metal]
-        makes Lumberjack = [Wood]
-        makes Blacksmith = [Tool]
-        produce Farmer inv = if (needsMet Farmer inv)
-                                    then if (amountOf Tool inv) > 0
-                                            then (toolUsed . (addToInv (Food,4)) . (subFromInv (Wood,1))) inv
-                                            else return (((addToInv (Food,2)) . (subFromInv (Wood,1))) inv)
-                                    else return inv
-        produce Miner inv = if (needsMet Miner inv)
-                                     then if (amountOf Tool inv) > 0
-                                            then (toolUsed . (addToInv (Ore,4)) . (subFromInv (Food,1))) inv
-                                            else return (((addToInv (Ore,2)) . (subFromInv (Food,1))) inv)
-                                     else return inv
-        produce Refiner inv = if (needsMet Refiner inv)
-                                       then if (amountOf Tool inv) > 0
-                                             then (toolUsed . (addToInv (Metal,(amountOf Ore inv))) . (repInInv (Ore,0)) . (subFromInv (Food,1))) inv
-                                            else return (((addToInv (Metal,(min (amountOf Ore inv) 2))) . (subFromInv (Ore,(min (amountOf Ore inv) 2))) . (subFromInv (Food,1))) inv)
-                                       else return inv
-        produce Lumberjack inv = if (needsMet Lumberjack inv)
-                                        then if (amountOf Tool inv) > 0
-                                            then (toolUsed . (addToInv (Wood,2)) . (subFromInv (Food,1))) inv
-                                            else return (((addToInv (Wood,1)) . (subFromInv (Food,1))) inv)
-                                        else return inv
-        produce Blacksmith inv = if (needsMet Blacksmith inv)
-                                         then return (((addToInv (Tool,(amountOf Metal inv))) . (repInInv (Metal,0)) . (subFromInv (Food,1))) inv)
-                                         else return inv
+job :: Commodity -> String
+job Food  = "Farmer"
+job Ore   = "Miner"
+job Metal = "Refiner"
+job Wood  = "Lumberjack"
+job Tool  = "Blacksmith"
 
 changeRange :: Double -> (Money,Money) -> Money
 changeRange p (a,b) = (a - p * 0.5 * (b - a), b + p * 0.5 * (b - a)) 
@@ -73,7 +57,7 @@ allComs = [Food, Wood, Ore, Metal, Tools]
 data Person = Person {ident :: Identifier
 		     ,inv :: Inventory Commodity
 		     ,price_ranges :: HashMap Commodity (Money,Money)
-		     ,job :: Jobs
+		     ,job :: Commodity
 		     ,money :: Money
 		     ,market :: Market
 		     }
@@ -93,10 +77,6 @@ instance Agent Person Jobs Commodities where
 							   	else return (Just (Bid item ((\max -> return (floor ((max - (favorability (lookup ranges item) (lastMean market iteem))) * (spaceInInventory )))) (if item `elem` (map fst (needs job)) then 1 else (money / (2 * price)))) price))
 									where
 										price = (maybe 1 fst (lookup ranges item)) 
-	doTurn (Person id inv ranges job money market) =  do
-								newinv <- produce job inv
-								toBuy <- (filter (\a -> a == Nothing) . map (\(item,_) -> amountToBuy (Person id newinv ranges job money market) item) . extractInv) allComs
-								toSell <- (filter (\a -> a == Nothing) . map (\(item,_) -> amountToSell (Person id newinv ranges job money market) item) . extractInv) newinv
  
 
 mean :: [(Money,Double)] -> Money
