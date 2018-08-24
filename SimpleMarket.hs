@@ -51,13 +51,17 @@ logistic :: Double -> Double -> Double ->  Double
 logistic mu s x = 1 / (1 + (exp ((mu - x) / s)))
 
 favorability :: Maybe (Money, Money) -> Money -> Double
-favorability (Just (a,b)) = logistic ((b + a)/2) ((a - b)/(2 * (log ((1/0.95) - 1))))
+favorability (Just (a,b)) v = logistic ((b + a)/2) ((a - b)/(2 * (log ((1/0.95) - 1)))) v
 favorability Nothing _ = 0
 
 upb :: a -> Either (Transaction t) (Bid t) -> Rand g a
 upb (Person id inv ranges job money market) (Left (Transaction _ _ item _ _)) = return $ Person id inv (update (\r -> Just (succSell r)) ranges item price_ranges) job money market
-upb (Person id inv ranges job money market) (Right (Bid item amount _)) = return $ Person id inv (update (\r -> Just (failToSell (lastMean market) r)) item  price_ranges) job money market
+upb (Person id inv ranges job money market) (Right (Bid _ item amount _)) = return $ Person id inv (update (\r -> Just (failToSell (lastMean market) r)) item  price_ranges) job money market
 
+inventoryMass :: AssList Commodity Amount -> Mass
+inventoryMass inv = sum $ map (\(c,a) -> (realToFrac a) * (unit_mass c)) inv
+
+spaceInInventory :: AssList Commodity (Money,Money) -> Amount
 spaceInInventory inv = 20 - (inventoryMass inv)
 
 type Inventory = AssList Commodity Amount
@@ -70,22 +74,27 @@ data Person = Person { ident :: Identifier
 		             , market :: Market
 		             }
 
-instance Agent Person Commodity where
-	getID a = ident a
-	getInventory a = inv a 
-	getJob a = job a
-	getMoney a = money a
-    --replaceInventory (Person id _ pr j mon mar) inv = Person id inv pr j mon mar 
-    --replaceMoney (Person id inv pr j _ mar) money = Person id inv pr j money mar 
-    --updatePriceBeleifs = upb
-	amountToSell (Person _ inv ranges job _ market) item  = if (item `elem` (map fst (needs job))) && (not (member ranges item))
-							    	                            then return Nothing
-								                                else return (Just (Bid item (ceiling ((favorability (lookup ranges item) (lastMean market item)) * (amountOf inv item))) (maybe 1 snd (lookup ranges item))))
-	amountToBuy (Person _ inv ranges job money market) item  = return $ if (item `elem` (makes job))
-							   	                                            then Nothing
-							   	                                            else (Just (Bid item ((\max -> return (floor ((max - (favorability (lookup ranges item) (lastMean market iteem))) * (spaceInInventory )))) (if item `elem` (map fst (needs job)) then 1 else (money / (2 * price)))) price))
-									where
-										price = (maybe 1 fst (lookup ranges item))
-
+instance Agent Person Commodity where { 
+                                      getID a = ident a ;
+                                      getInventory a = inv a ;
+	                                  getJob a = job a ;
+	                                  getMoney a = money a ;
+                                      replaceInventory (Person id _ pr j mon mar) inv = Person id inv pr j mon mar ;
+                                      replaceMoney (Person id inv pr j _ mar) money = Person id inv pr j money mar ;
+                                      updatePriceBeleifs = upb ;
+                                      amountToSell (Person id inv ranges job _ market) item  = if (item `elem` (map fst (needs job))) && (not $ member ranges item)
+							    	                            then return $ Nothing
+                                                                else do { let price  = maybe 1 snd (lookup ranges item)
+                                                                        ; let amount = ceiling $ (favorability (lookup ranges item) (lastMean market item)) * (amountOf inv item)
+                                                                        ; return $ Just $ Bid id item amount price
+                                                                        } ;
+	                                  amountToBuy (Person id inv ranges job money market) item  = return $ if (item `elem` (makes job))
+                                                                then return $ Nothing
+                                                                else do { let price  = maybe 1 fst (lookup ranges item)
+                                                                        ; let max    = if item `elem` (map fst $ needs job) then 1 else money / (2 * price)
+                                                                        ; let amount = floor $ (max - (favorability (lookup ranges item) (lastMean market item))) * (spaceInInventory inv)
+                                                                        ; return $ Just $ Bid id item amount price
+                                                                        } ;
+                                      }
 data Market = Market
 instance ClearingHouse Market Person Commodity

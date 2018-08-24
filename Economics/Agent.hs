@@ -26,6 +26,7 @@ module Economics.Agent
                       ,tradeHistory
                       ,updateHouse
                       ,replaceAgent
+                      ,lastMean
                       )
         ) where
 
