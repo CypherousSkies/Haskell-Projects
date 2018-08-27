@@ -39,12 +39,12 @@ import Libs.AssList
 
 type Money  = Double
 type Mass   = Double
-type Amount = Int
+type Amount = Double
 type Identifier = Int
 
 class (Eq a) => Tradable a where
     unit_mass :: a -> Mass
-    recipes :: a -> [([(a,Amount)],Rand g [(a,Amount)])]
+    recipes :: (RandomGen g) => a -> [([(a,Amount)],Rand g [(a,Amount)])]
 
 data Transaction t = Transaction { seller :: Identifier
                                  , buyer :: Identifier
@@ -60,7 +60,7 @@ data Bid t = Bid { bidder :: Identifier
                  } deriving Eq
 
 thingf :: Rand g Money -> Amount -> Rand g Money
-thingf rm am = fmap (\x -> x * (fromIntegral am)) rm
+thingf rm am = fmap (\x -> x * (realToFrac am)) rm
 
 recSide :: (t -> Rand g Money) -> [(t,Amount)] -> Rand g Money
 recSide est thing = fmap sum (mapM (\(t,am) -> thingf (est t) am) thing)
@@ -78,11 +78,11 @@ class (Tradable t) => Agent a t | a -> t where
     getJob :: a -> t
     getMoney :: a -> Money
     replaceMoney :: a -> Money -> a
-    updatePriceBeleifs :: a -> Either (Transaction t) (Bid t) -> Rand g a -- Either a transaction occured or a bid was rejected
-    estimateValue :: a -> t -> Rand g Money
-    amountToSell :: a -> t -> Maybe (Rand g (Bid t))
-    amountToBuy :: a -> t -> Maybe (Rand g (Bid t))
-    doProduction :: a -> Rand g a
+    updatePriceBeleifs :: RandomGen g  => a -> Either (Transaction t) (Bid t) -> Rand g a -- Either a transaction occured or a bid was rejected
+    estimateValue :: RandomGen g => a -> t -> Rand g Money
+    amountToSell :: RandomGen g => a -> t -> Maybe (Rand g (Bid t))
+    amountToBuy :: RandomGen g => a -> t -> Maybe (Rand g (Bid t))
+    doProduction :: RandomGen g => a -> Rand g a
     doProduction a = do { let possibleRecipes = filter (\(r,_) -> and $ map (\(t,am) -> maybe False (\v -> am >= v) (lookup t (getInventory a))) r) (recipes $ getJob a)
                         ; guessRecipe <- (\(l,rl) -> fmap (zip l) (sequence rl)) $ unzip possibleRecipes
                         ; valueRecipe <- netValue (estimateValue a) guessRecipe
@@ -92,7 +92,7 @@ class (Tradable t) => Agent a t | a -> t where
                         ; let addProducts      = foldl' (\inv (t,am) -> adjust (\n -> n + am) t inv) removedReactants (snd chosenRecipe)
                         ; return $ (\a' -> replaceMoney a' ((getMoney a) - 2)) $ replaceInventory a addProducts
                         }
-    doTurn :: a -> Rand g (a,[Bid t],[Bid t])
+    doTurn :: RandomGen g => a -> Rand g (a,[Bid t],[Bid t])
     doTurn a = do { postProd <- doProduction a
                   ; sells    <- sequence $ mapMaybe (\(k,_) -> amountToSell a k) $ getInventory postProd
                   ; buys     <- sequence $ mapMaybe (\(k,_) -> amountToBuy  a k) $ getInventory postProd
@@ -103,7 +103,7 @@ getByID :: (Tradable t, Agent a t) => [a] -> Identifier -> Maybe a
 getByID [] _ = Nothing
 getByID (x:xs) i = if (getID x) == i then Just x else getByID xs i
 
-resolveBids :: Tradable t => [Bid t] -> [Bid t] -> (Bid t -> Bid t -> (Rand g (Transaction t), Maybe (Bid t, Bool))) -> Rand g [Either (Transaction t) (Bid t)]
+resolveBids :: (Tradable t, RandomGen g) => [Bid t] -> [Bid t] -> (Bid t -> Bid t -> (Rand g (Transaction t), Maybe (Bid t, Bool))) -> Rand g [Either (Transaction t) (Bid t)]
 resolveBids [] l _ = mapM (\b -> return (Right b)) l
 resolveBids l [] f = resolveBids [] l f
 resolveBids (s:ss) bs f = if elem (thing s) (map thing bs)
@@ -117,7 +117,7 @@ resolveBids (s:ss) bs f = if elem (thing s) (map thing bs)
                                      }
                              else (resolveBids ss bs f) >>= (\bids' -> return $ (Right s) : bids')
 
-updateAgents :: (Tradable t, Agent a t) => [Either (Transaction t) (Bid t)] -> [a] -> Rand g [a]
+updateAgents :: (RandomGen g) => (Tradable t, Agent a t) => [Either (Transaction t) (Bid t)] -> [a] -> Rand g [a]
 updateAgents etbs as = mapM (\a -> do { let filtered = filter (either (\t -> ((seller t) == (getID a)) || ((buyer t) == (getID a))) (\b -> (bidder b) == (getID a))) etbs
                                       ; foldM (\a' etb -> updatePriceBeleifs a' etb) a filtered
                                       }) as
@@ -133,14 +133,14 @@ class (Tradable t, Agent a t) => ClearingHouse c a t | c -> t, c -> a where
         getAgents :: c -> [a]
         getAgentByID :: c -> Identifier -> Maybe a
         getAgentByID c = getByID (getAgents c)
-        haggle :: c -> Bid t -> Bid t -> (Rand g (Transaction t), Maybe (Bid t, Bool)) -- If bool is true, then is a SELL
+        haggle :: (RandomGen g) => c -> Bid t -> Bid t -> (Rand g (Transaction t), Maybe (Bid t, Bool)) -- If bool is true, then is a SELL
         defaultPrice :: c -> t -> Money
         tradeHistory :: c -> [[Transaction t]]
         updateHouse :: c -> [a] -> [Transaction t] -> c
         lastMean :: c -> t -> Money
         lastMean c t = turnMean t $ head $ tradeHistory c
-        replaceAgent :: c -> [(t,Amount)] -> Rand g a
-        doRound :: c -> Rand g c
+        replaceAgent :: (RandomGen g) => c -> [(t,Amount)] -> Rand g a
+        doRound :: (RandomGen g) => c -> Rand g c
         doRound c = do { asbp <- mapM doTurn $ getAgents c
                         ; let (agents,sells,buys) = (\(as,sl,bl) -> (as, concat sl, concat bl)) $ unzip3 asbp
                         ; let sortSells = sortBy (\s1 s2 -> compare (cost s1) (cost s2)) sells
