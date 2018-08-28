@@ -119,9 +119,9 @@ instance ClearingHouse Market Person Commodity where
     tradeHistory (Market _ his _) = his
     updateHouse (Market _ old def) pop his = Market pop (his:old) def
     replaceAgent this [] ident = let coms = map (\(c,_) -> (c,1)) $ defaults this
-                                  in (mkDist coms) >>= (\job -> return $ Person ident (map (\(c,_) -> (c,5)) coms) (map (\(c,m) -> (c, (m * 0.9, m * 1.1))) $ defaults this) job 50 this)
+                                  in (mkDist coms) >>= (\job -> return $ Person ident (map (\(c,_) -> (c,5)) coms) (map (\(c,m) -> (c, (m * 0.9, m * 1.1))) $ defaults this) job 500 this)
     replaceAgent this supdem ident = let job = fst $ head $ sortBy (\(_,am1) (_,am2) -> compare am1 am2) supdem
-                                      in return $ Person ident (map (\(c,_) -> (c,5)) $ defaults this) (map (\(c,m) -> (c, (m * 0.9, m * 1.1))) $ defaults this) job 50 this
+                                      in return $ Person ident (map (\(c,_) -> (c,5)) $ defaults this) (map (\(c,m) -> (c, (m * 0.9, m * 1.1))) $ defaults this) job 500 this
     updateAgent this (Person i inv pr j m _) = return $ Person i inv pr j m this
 
 emptyPerson :: Int -> Person
@@ -137,20 +137,20 @@ doNRounds :: (RandomGen g) => Market -> Int -> Rand g Market
 doNRounds mar n = foldM (\m _ -> doRound m) mar [1..n]
 
 defaultMarket :: Market
-defaultMarket = mkMarket 100 (map (\c -> (c,1)) allComs)
+defaultMarket = mkMarket 100 (map (\c -> (c,10)) allComs)
 
 currentPrices :: Market -> AssList Commodity Money
 currentPrices m = map (\c -> (c,lastMean m c)) allComs
 
+mean :: [(Amount,Money)] -> Money
+mean [] = 0
+mean xs = (\(ams,mos) -> (sum $ zipWith (\a b -> (realToFrac a) * b) ams mos) / (realToFrac (sum ams))) $ unzip xs
+
+formatHistory :: [[Transaction Commodity]] -> [(Commodity, [Money])]
+formatHistory transes = map (\c -> (c, map (\turn -> mean $ map (\(Transaction _ _ _ q u) -> (q, u)) $ filter (\(Transaction _ _ c' _ _) -> c' == c) turn) transes)) allComs
+
 main :: IO ()
 main = do { gen0 <- getStdGen 
-          ; let p = evalRand (replaceAgent defaultMarket [] 2) gen0
-          ; putStrLn $ show p
-          ; putStrLn "Initial Agents"
-          ; putStrLn $ show $ population defaultMarket
-          ; let test = evalRand (doNRounds defaultMarket 1) gen0
-          ; putStrLn "1 Season Later Agents"
-          ; putStrLn $ show $ population test
-          ; putStrLn "Current Prices"
-          ; putStrLn $ show $ currentPrices test
+          ; let test = evalRand (doNRounds defaultMarket 50) gen0
+          ; writeFile "SimpleMarketTest.csv" $ foldl' (++) "" $ map (\(c,ms) -> (show c) ++ (foldl' (\a b -> "," ++ (show b)) "\n" ms)) $ formatHistory $ tradeHistory test
           }

@@ -91,10 +91,14 @@ class (Tradable t) => Agent a t | a -> t where
                         ; guessRecipe <- (\(l,rl) -> fmap (zip l) (sequence rl)) $ unzip possibleRecipes
                         ; valueRecipe <- netValue (estimateValue a) guessRecipe
                         ; let recAndVal = zip valueRecipe guessRecipe
-                        ; let chosenRecipe = snd $ head $ sortBy (\(v1,_) (v2,_) -> compare v1 v2) recAndVal
-                        ; let removedReactants = foldl' (\inv (t,am) -> adjust (\n -> n - am) t inv) (getInventory a) (fst chosenRecipe)
-                        ; let addProducts      = foldl' (\inv (t,am) -> adjust (\n -> n + am) t inv) removedReactants (snd chosenRecipe)
-                        ; return $ (\a' -> replaceMoney a' ((getMoney a) - 2)) $ replaceInventory a addProducts
+                        ; case recAndVal of { [] -> return $ replaceMoney a ((getMoney a) - 2)
+                                            ; rav -> do {
+                                                        ; let chosenRecipe = snd $ head $ sortBy (\(v1,_) (v2,_) -> compare v1 v2) rav
+                                                        ; let removedReactants = foldl' (\inv (t,am) -> adjust (\n -> n - am) t inv) (getInventory a) (fst chosenRecipe)
+                                                        ; let addProducts      = foldl' (\inv (t,am) -> adjust (\n -> n + am) t inv) removedReactants (snd chosenRecipe)
+                                                        ; return $ (\a' -> replaceMoney a' ((getMoney a) - 2)) $ replaceInventory a addProducts
+                                                        }
+                                            }
                         }
     doTurn :: RandomGen g => a -> Rand g (a,[Bid t],[Bid t])
     doTurn a = do { postProd <- doProduction a
@@ -111,14 +115,15 @@ resolveBids :: (Tradable t, RandomGen g) => [Bid t] -> [Bid t] -> (Bid t -> Bid 
 resolveBids [] l _ = mapM (\b -> return (Right b)) l
 resolveBids l [] f = resolveBids [] l f
 resolveBids (s:ss) bs f = if elem (thing s) (map thing bs)
-                             then do { let buy = head $ filter (\b -> (thing b) == (thing s)) bs
-                                     ; let (rtrans, mbb) = f s buy
-                                     ; let ss' = maybe ss (\(bid,isSell) -> if isSell then bid:ss else ss) mbb
-                                     ; let bs' = (maybe ss (\(bid,isSell) -> if isSell then bs else bid:bs) mbb) \\ [buy]
-                                     ; bids' <- resolveBids ss' bs' f
-                                     ; rt <- rtrans
-                                     ; return $ (Left rt) : bids'
-                                     }
+                             then case filter (\b -> (thing b) == (thing s)) bs of
+                                    [] -> (resolveBids ss bs f) >>= (\rest -> return $ (Right s) : rest)
+                                    (buy:_) -> do { let (rtrans, mbb) = f s buy
+                                                  ; let ss' = maybe ss (\(bid,isSell) -> if isSell then bid:ss else ss) mbb
+                                                  ; let bs' = (maybe ss (\(bid,isSell) -> if isSell then bs else bid:bs) mbb) \\ [buy]
+                                                  ; bids' <- resolveBids ss' bs' f
+                                                  ; rt <- rtrans
+                                                  ; return $ (Left rt) : bids'
+                                                  }
                              else (resolveBids ss bs f) >>= (\bids' -> return $ (Right s) : bids')
 
 updateAgents :: (RandomGen g) => (Tradable t, Agent a t) => [Either (Transaction t) (Bid t)] -> [a] -> Rand g [a]
