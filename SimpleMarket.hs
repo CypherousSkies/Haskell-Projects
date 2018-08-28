@@ -151,6 +151,6 @@ formatHistory transes = map (\c -> (c, map (\turn -> mean $ map (\(Transaction _
 
 main :: IO ()
 main = do { gen0 <- getStdGen 
-          ; let test = evalRand (doNRounds defaultMarket 50) gen0
+          ; let test = evalRand (doNRounds defaultMarket 1000) gen0
           ; writeFile "SimpleMarketTest.csv" $ foldl' (\a b -> b ++ "\n" ++ a) "" $ map (\(c,ms) -> (show c) ++ (foldl' (\a b -> ", " ++ (show b)) "" ms)) $ formatHistory $ tradeHistory test
           }
