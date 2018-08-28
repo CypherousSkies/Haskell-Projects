@@ -55,13 +55,13 @@ data Transaction t = Transaction { seller :: Identifier
                                  , item :: t
                                  , quantity :: Amount
                                  , unit_price :: Money
-                                 } deriving Eq
+                                 } deriving (Eq,Show)
 
 data Bid t = Bid { bidder :: Identifier
                  , thing :: t
                  , number :: Amount
                  , cost :: Money
-                 } deriving Eq
+                 } deriving (Eq,Show)
 
 thingf :: Rand g Money -> Amount -> Rand g Money
 thingf rm am = fmap (\x -> x * (realToFrac am)) rm
@@ -104,7 +104,9 @@ class (Tradable t) => Agent a t | a -> t where
     doTurn a = do { postProd <- doProduction a
                   ; sells    <- sequence $ mapMaybe (\(k,_) -> amountToSell a k) $ getInventory postProd
                   ; buys     <- sequence $ mapMaybe (\(k,_) -> amountToBuy  a k) $ getInventory postProd
-                  ; return (a,sells,buys)
+                  ; let sells' = filter (\(Bid _ _ n c) -> (n > 0) && (c > 0)) sells
+                  ; let buys'  = filter (\(Bid _ _ n c) -> (n > 0) && (c > 0)) buys
+                  ; return (a,sells',buys')
                   }
 
 getByID :: (Tradable t, Agent a t) => [a] -> Identifier -> Maybe a
@@ -128,7 +130,8 @@ resolveBids (s:ss) bs f = if elem (thing s) (map thing bs)
 
 updateAgents :: (RandomGen g) => (Tradable t, Agent a t) => [Either (Transaction t) (Bid t)] -> [a] -> Rand g [a]
 updateAgents etbs as = mapM (\a -> do { let filtered = filter (either (\t -> ((seller t) == (getID a)) || ((buyer t) == (getID a))) (\b -> (bidder b) == (getID a))) etbs
-                                      ; foldM (\a' etb -> updatePriceBeleifs a' etb) a filtered
+                                      ; let paid     = foldl' (\a' etb -> replaceMoney a' $ (getMoney a') + (either (\(Transaction _ _ _ q u) -> (realToFrac q) * u) (const 0) etb)) a filtered
+                                      ; foldM (\a' etb -> updatePriceBeleifs a' etb) paid filtered
                                       }) as
 
 turnMean :: (Tradable t) => t -> [Transaction t] -> Money
