@@ -7,8 +7,8 @@ module Economics.Agent
         ,Amount
         ,Identifier
         ,Tradable(unit_mass,recipes,needs)
-        ,Transaction(Transaction)
-        ,Bid(Bid)
+        ,Transaction(Transaction,seller,buyer,item,quantity,unit_price)
+        ,Bid(Bid,bidder,thing,number,cost)
         ,Agent(getID
               ,getInventory
               ,getJob
@@ -26,7 +26,9 @@ module Economics.Agent
                       ,tradeHistory
                       ,updateHouse
                       ,replaceAgent
+                      ,updateAgent
                       ,lastMean
+                      ,doRound
                       )
         ) where
 
@@ -135,13 +137,15 @@ class (Tradable t, Agent a t) => ClearingHouse c a t | c -> t, c -> a where
         getAgents :: c -> [a]
         getAgentByID :: c -> Identifier -> Maybe a
         getAgentByID c = getByID (getAgents c)
-        haggle :: (RandomGen g) => c -> Bid t -> Bid t -> (Rand g (Transaction t), Maybe (Bid t, Bool)) -- If bool is true, then is a SELL
+        haggle :: (RandomGen g) => c -> Bid t -> Bid t -> (Rand g (Transaction t), Maybe (Bid t, Bool)) --c -> sell -> buy; If bool is true, then is a SELL
         defaultPrice :: c -> t -> Money
         tradeHistory :: c -> [[Transaction t]]
         updateHouse :: c -> [a] -> [Transaction t] -> c
         lastMean :: c -> t -> Money
-        lastMean c t = turnMean t $ head $ tradeHistory c
-        replaceAgent :: (RandomGen g) => c -> [(t,Amount)] -> Rand g a
+        lastMean c t = case tradeHistory c of [] -> 0
+                                              (x:_) -> turnMean t x
+        replaceAgent :: (RandomGen g) => c -> [(t,Amount)] -> Identifier -> Rand g a
+        updateAgent :: (RandomGen g) => c -> a -> Rand g a
         doRound :: (RandomGen g) => c -> Rand g c
         doRound c = do { asbp <- mapM doTurn $ getAgents c
                         ; let (agents,sells,buys) = (\(as,sl,bl) -> (as, concat sl, concat bl)) $ unzip3 asbp
@@ -151,6 +155,8 @@ class (Tradable t, Agent a t) => ClearingHouse c a t | c -> t, c -> a where
                         ; updatedAgents <- updateAgents resolved agents
                         ; let transactions = lefts resolved
                         ; let excessDemand = map (\t -> (t, (sum $ map number $ filter (\bid -> t == (thing bid)) buys) - (sum $ map number $ filter (\bid -> t == (thing bid)) sells))) $ nub $ map thing (buys ++ sells)
-                        ; newAgents <- mapM (\a -> if (getMoney a) <= 0 then replaceAgent c excessDemand else return a) updatedAgents
-                        ; return $ updateHouse c newAgents transactions
+                        ; newAgents <- mapM (\a -> if (getMoney a) <= 0 then replaceAgent c excessDemand (getID a) else return a) updatedAgents
+                        ; let uh = updateHouse c newAgents transactions
+                        ; newAgents' <- mapM (\a -> updateAgent uh a) newAgents
+                        ; return $ updateHouse c newAgents' transactions
                         }

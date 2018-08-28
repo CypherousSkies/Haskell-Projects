@@ -1,9 +1,10 @@
-{-# LANGUAGE MultiParamTypeClasses, InstanceSigs #-}
+{-# LANGUAGE InstanceSigs, MultiParamTypeClasses #-}
 
-import Economics.Agent
-import Random.Dist
-import Libs.AssList
 import Control.Monad.Random
+import Data.List
+import Economics.Agent
+import Libs.AssList
+import Random.Dist
 
 type Components = AssList Commodity Amount
 type Recipe g = (Components, Rand g Components)
@@ -11,11 +12,11 @@ type Recipe g = (Components, Rand g Components)
 data Commodity = Food | Wood | Ore | Metal | Tool deriving (Show, Read, Eq)
 instance Tradable Commodity where
         unit_mass _ = 1
-        recipes Food  = create [(Wood, 1)] (Food, 2)
-        recipes Ore   = create [(Food, 1)] (Ore, 2)
+        recipes Food = create [(Wood, 1)] (Food, 2)
+        recipes Ore = create [(Food, 1)] (Ore, 2)
         recipes Metal = refine [(Food, 1)] Ore (Metal, 1) 2 20
-        recipes Wood  = create [(Food, 1)] (Wood, 2)
-        recipes Tool  = map (\n -> ([(Metal, n), (Food, 1)], return [(Tool, n)])) [1..20]
+        recipes Wood = create [(Food, 1)] (Wood, 2)
+        recipes Tool = map (\n -> ([(Metal, n), (Food, 1)], return [(Tool, n)])) [1..20]
 
 toolUsed :: RandomGen g => Components -> Rand g Components
 toolUsed woTool = mkDist [((Tool, 1) : woTool, 0.9), (woTool, 0.1)]
@@ -30,14 +31,14 @@ refine base limiting (out, ratio) maxWOTool max = let woTool = map (\n -> ((limi
 
 
 showjob :: Commodity -> String
-showjob Food  = "Farmer"
-showjob Ore   = "Miner"
+showjob Food = "Farmer"
+showjob Ore = "Miner"
 showjob Metal = "Refiner"
-showjob Wood  = "Lumberjack"
-showjob Tool  = "Blacksmith"
+showjob Wood = "Lumberjack"
+showjob Tool = "Blacksmith"
 
 changeRange :: Double -> (Money,Money) -> (Money, Money)
-changeRange p (a, b) = (a - p * 0.5 * (b - a), b + p * 0.5 * (b - a)) 
+changeRange p (a, b) = (a - p * 0.5 * (b - a), b + p * 0.5 * (b - a))
 
 succSell :: (Money,Money) -> (Money,Money)
 succSell r = changeRange (0 - 0.05) r
@@ -68,29 +69,29 @@ amountOf inv item = sum $ map snd $ filter (\(i,_) -> i == item) inv
 type Inventory = AssList Commodity Amount
 
 data Person = Person { ident :: Identifier
-		             , inv :: Inventory
-		             , price_ranges :: AssList Commodity (Money,Money)
-		             , job :: Commodity
-		             , money :: Money
-		             , market :: Market
-		             }
+                             , inv :: Inventory
+                             , price_ranges :: AssList Commodity (Money,Money)
+                             , job :: Commodity
+                             , money :: Money
+                             , market :: Market
+                             }
 
-instance Agent Person Commodity where { 
+instance Agent Person Commodity where {
                                       getID a = ident a ;
                                       getInventory a = inv a ;
-	                                  getJob a = job a ;
-	                                  getMoney a = money a ;
+                                          getJob a = job a ;
+                                          getMoney a = money a ;
                                       replaceInventory (Person id _ pr j mon mar) inv = Person id inv pr j mon mar ;
                                       replaceMoney (Person id inv pr j _ mar) money = Person id inv pr j money mar ;
                                       estimateValue (Person _ _ pr _ _ _) c = return $ (\(a,b) -> (a + b) / 2) $ maybe (0,0) id $ lookup c pr ;
                                       updatePriceBeleifs = upb ;
-                                      amountToSell (Person id inv ranges job _ market) item  = if (item `elem` (needs job)) && (not $ member item ranges)
-							    	                            then Nothing
+                                      amountToSell (Person id inv ranges job _ market) item = if (item `elem` (needs job)) && (not $ member item ranges)
+                                                                                                then Nothing
                                                                 else do { let price  = maybe 1 snd (lookup item ranges)
                                                                         ; let amount = ceiling $ (favorability (lookup item ranges) (lastMean market item)) * (realToFrac $ amountOf inv item)
                                                                         ; Just $ return $ Bid id item amount price
                                                                         } ;
-	                                  amountToBuy (Person id inv ranges job money market) item  = if (item == job)
+                                          amountToBuy (Person id inv ranges job money market) item = if (item == job)
                                                                 then Nothing
                                                                 else do { let price  = maybe 1 fst (lookup item ranges)
                                                                         ; let max    = if item `elem` (needs job) then 1 else money / (2 * price)
@@ -98,6 +99,58 @@ instance Agent Person Commodity where {
                                                                         ; Just $ return $ Bid id item amount price
                                                                         } ;
                                       }
+instance Show Person where
+    show (Person i _ _ j _ _) = "Person #" ++ (show i) ++ " the " ++ (show j) ++ " producer\n"
 
-data Market = Market
-instance ClearingHouse Market Person Commodity
+data Market = Market { population :: [Person]
+                     , history :: [[Transaction Commodity]]
+                     , defaults :: AssList Commodity Money
+                     }
+instance ClearingHouse Market Person Commodity where
+    getAgents (Market pop _ _) = pop
+    haggle _ sell buy = let value = ((cost sell) - (cost buy)) / 2
+                            delta = (number sell) - (number buy)
+                            agent = if delta > 0 then sell else buy
+                         in if delta == 0
+                               then (return $ Transaction (bidder sell) (bidder buy) (thing buy) (number sell) value, Nothing)
+                               else (return $ Transaction (bidder sell) (bidder buy) (thing buy) (min (number sell) (number buy)) value
+                                    , Just (Bid (bidder agent) (thing buy) (abs delta) (cost agent), delta > 0))
+    defaultPrice (Market _ _ def) t = maybe 1 id (lookup t def)
+    tradeHistory (Market _ his _) = his
+    updateHouse (Market _ old def) pop his = Market pop (his:old) def
+    replaceAgent this [] ident = let coms = map (\(c,_) -> (c,1)) $ defaults this
+                                  in (mkDist coms) >>= (\job -> return $ Person ident (map (\(c,_) -> (c,5)) coms) (map (\(c,m) -> (c, (m * 0.9, m * 1.1))) $ defaults this) job 50 this)
+    replaceAgent this supdem ident = let job = fst $ head $ sortBy (\(_,am1) (_,am2) -> compare am1 am2) supdem
+                                      in return $ Person ident (map (\(c,_) -> (c,5)) $ defaults this) (map (\(c,m) -> (c, (m * 0.9, m * 1.1))) $ defaults this) job 50 this
+    updateAgent this (Person i inv pr j m _) = return $ Person i inv pr j m this
+
+emptyPerson :: Int -> Person
+emptyPerson k = Person k [] [] Tool (0-10) (Market [] [] [])
+
+mkMarket :: Int -> AssList Commodity Money -> Market
+mkMarket n def = evalRand ((mapM (replaceAgent (Market [] [] def) []) [1..n]) >>= (\p -> return $ Market p [] def)) (mkStdGen 0)
+
+allComs :: [Commodity]
+allComs = [Food,Wood,Ore,Metal,Tool]
+
+doNRounds :: (RandomGen g) => Market -> Int -> Rand g Market
+doNRounds mar n = foldM (\m _ -> doRound m) mar [1..n]
+
+defaultMarket :: Market
+defaultMarket = mkMarket 100 (map (\c -> (c,1)) allComs)
+
+currentPrices :: Market -> AssList Commodity Money
+currentPrices m = map (\c -> (c,lastMean m c)) allComs
+
+main :: IO ()
+main = do { gen0 <- getStdGen 
+          ; let p = evalRand (replaceAgent defaultMarket [] 2) gen0
+          ; putStrLn $ show p
+          ; putStrLn "Initial Agents"
+          ; putStrLn $ show $ population defaultMarket
+          ; let test = evalRand (doNRounds defaultMarket 1) gen0
+          ; putStrLn "1 Season Later Agents"
+          ; putStrLn $ show $ population test
+          ; putStrLn "Current Prices"
+          ; putStrLn $ show $ currentPrices test
+          }
