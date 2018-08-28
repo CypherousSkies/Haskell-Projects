@@ -1,12 +1,12 @@
 {-# LANGUAGE ExistentialQuantification, FunctionalDependencies,
-             MultiParamTypeClasses #-}
+             MultiParamTypeClasses, AllowAmbiguousTypes #-}
 
 module Economics.Agent
         (Money
         ,Mass
         ,Amount
         ,Identifier
-        ,Tradable(unit_mass,recipes)
+        ,Tradable(unit_mass,recipes,needs)
         ,Transaction(Transaction)
         ,Bid(Bid)
         ,Agent(getID
@@ -39,12 +39,14 @@ import Libs.AssList
 
 type Money  = Double
 type Mass   = Double
-type Amount = Double
+type Amount = Int
 type Identifier = Int
 
 class (Eq a) => Tradable a where
     unit_mass :: a -> Mass
-    recipes :: (RandomGen g) => a -> [([(a,Amount)],Rand g [(a,Amount)])]
+    recipes :: RandomGen g => a -> [( AssList a Amount , Rand g (AssList a Amount) )]
+    needs :: a -> [a]
+    needs a = nub $ map fst $ join $ map fst $ map (\(a,rt) -> (a, execRand rt (mkStdGen 0))) $ recipes a
 
 data Transaction t = Transaction { seller :: Identifier
                                  , buyer :: Identifier
