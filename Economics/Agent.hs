@@ -87,13 +87,13 @@ class (Tradable t) => Agent a t | a -> t where
     amountToSell :: RandomGen g => a -> t -> Maybe (Rand g (Bid t))
     amountToBuy :: RandomGen g => a -> t -> Maybe (Rand g (Bid t))
     doProduction :: RandomGen g => a -> Rand g a
-    doProduction a = do { let possibleRecipes = filter (\(r,_) -> and $ map (\(t,am) -> maybe False (\v -> am >= v) (lookup t (getInventory a))) r) (recipes $ getJob a)
+    doProduction a = do { let possibleRecipes = filter (\(r,_) -> and $ map (\(t,am) -> maybe False (\v -> am <= v) (lookup t (getInventory a))) r) (recipes $ getJob a)
                         ; guessRecipe <- (\(l,rl) -> fmap (zip l) (sequence rl)) $ unzip possibleRecipes
                         ; valueRecipe <- netValue (estimateValue a) guessRecipe
                         ; let recAndVal = zip valueRecipe guessRecipe
                         ; case recAndVal of { [] -> return $ replaceMoney a ((getMoney a) - 2)
                                             ; rav -> do {
-                                                        ; let chosenRecipe = snd $ head $ sortBy (\(v1,_) (v2,_) -> compare v1 v2) rav
+                                                        ; let chosenRecipe = snd $ head $ reverse $ sortBy (\(v1,_) (v2,_) -> compare v1 v2) rav
                                                         ; let removedReactants = foldl' (\inv (t,am) -> adjust (\n -> n - am) t inv) (getInventory a) (fst chosenRecipe)
                                                         ; let addProducts      = foldl' (\inv (t,am) -> adjust (\n -> n + am) t inv) removedReactants (snd chosenRecipe)
                                                         ; return $ (\a' -> replaceMoney a' ((getMoney a) - 2)) $ replaceInventory a addProducts
@@ -106,7 +106,7 @@ class (Tradable t) => Agent a t | a -> t where
                   ; buys     <- sequence $ mapMaybe (\(k,_) -> amountToBuy  a k) $ getInventory postProd
                   ; let sells' = filter (\(Bid _ _ n c) -> (n > 0) && (c > 0)) sells
                   ; let buys'  = filter (\(Bid _ _ n c) -> (n > 0) && (c > 0)) buys
-                  ; return (a,sells',buys')
+                  ; return (postProd,sells',buys')
                   }
 
 getByID :: (Tradable t, Agent a t) => [a] -> Identifier -> Maybe a
@@ -130,7 +130,7 @@ resolveBids (s:ss) bs f = if elem (thing s) (map thing bs)
 
 updateAgents :: (RandomGen g) => (Tradable t, Agent a t) => [Either (Transaction t) (Bid t)] -> [a] -> Rand g [a]
 updateAgents etbs as = mapM (\a -> do { let filtered = filter (either (\t -> ((seller t) == (getID a)) || ((buyer t) == (getID a))) (\b -> (bidder b) == (getID a))) etbs
-                                      ; let paid     = foldl' (\a' etb -> replaceMoney a' $ (getMoney a') + (either (\(Transaction _ _ _ q u) -> (realToFrac q) * u) (const 0) etb)) a filtered
+                                      ; let paid     = foldl' (\a' etb -> replaceMoney a' $ (getMoney a') + (either (\(Transaction s _ _ q u) -> (if (getID a) == s then (0 - 1) else 1) * (realToFrac q) * u) (const 0) etb)) a filtered
                                       ; foldM (\a' etb -> updatePriceBeleifs a' etb) paid filtered
                                       }) as
 
