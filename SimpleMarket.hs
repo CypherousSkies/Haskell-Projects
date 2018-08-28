@@ -120,7 +120,7 @@ instance ClearingHouse Market Person Commodity where
     tradeHistory (Market _ his _) = his
     updateHouse (Market _ old def) pop his = Market pop (his:old) def
     replaceAgent this [] ident = let coms = map (\(c,_) -> (c,1)) $ defaults this
-                                  in (mkDist coms) >>= (\job -> return $ Person ident (map (\(c,_) -> (c,1)) coms) (map (\(c,m) -> (c, (m * 0.8, m * 1.2))) $ defaults this) job 50 this)
+                                  in (mkDist coms) >>= (\job -> return $ Person ident (map (\(c,_) -> (c,1)) coms) (map (\(c,m) -> (c, (m * 0.8, m * 1.2))) $ defaults this) job 100 this)
     replaceAgent this supdem ident = let job = fst $ head $ reverse $ sortBy (\(_,am1) (_,am2) -> compare am1 am2) supdem
                                       in return $ Person ident ((map (\(c,_) -> (c,0))) $ defaults this) (map (\(c,m) -> (c, (m * 0.2, m * 1.8))) $ map (\(c,_) -> (c,lastMean this c)) $ defaults this) job 150 this
     updateAgent this (Person i inv pr j m _) = return $ Person i inv pr j m this
@@ -138,7 +138,7 @@ doNRounds :: (RandomGen g) => Market -> Int -> Rand g Market
 doNRounds mar n = foldM (\m _ -> doRound m) mar [1..n]
 
 defaultMarket :: (RandomGen g) => Rand g Market
-defaultMarket = mkMarket 100 (map (\c -> (c,1)) allComs)
+defaultMarket = mkMarket 100 (map (\c -> (c,10)) allComs)
 
 currentPrices :: Market -> AssList Commodity Money
 currentPrices m = map (\c -> (c, lastMean m c)) allComs
