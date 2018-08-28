@@ -19,7 +19,7 @@ instance Tradable Commodity where
         recipes Tool = map (\n -> ([(Metal, n), (Food, 1)], return [(Tool, n)])) [1..20]
 
 toolUsed :: RandomGen g => Components -> Rand g Components
-toolUsed woTool = mkDist [((Tool, 1) : woTool, 0.5), (woTool, 0.5)]
+toolUsed woTool = mkDist [((Tool, 1) : woTool, 0.9), (woTool, 0.1)]
 
 create :: RandomGen g => Components -> (Commodity,Amount) -> [Recipe g]
 create ins (out, n) = (ins, return $ [(out, n)]) : (ins, toolUsed $ [(out, 2 * n)]):[]
@@ -50,7 +50,7 @@ logistic :: Double -> Double -> Double ->  Double
 logistic mu s x = 1 / (1 + (exp ((mu - x) / s)))
 
 favorability :: Maybe (Money, Money) -> Money -> Double
-favorability (Just (a,b)) v = 0.05 + 0.95 * logistic ((b + a)/2) ((a - b) / 8) v
+favorability (Just (a,b)) v = if a == b then 0.5 else logistic ((b + a)/2) ((a - b) / 8) v
 favorability Nothing _ = 0
 
 upb :: Person -> Either (Transaction Commodity) (Bid Commodity) -> Rand g Person
@@ -86,16 +86,17 @@ instance Agent Person Commodity where {
                                       estimateValue (Person _ _ pr _ _ _) c = return $ (\(a,b) -> (a + b) / 2) $ maybe (0,0) id $ lookup c pr ;
                                       updatePriceBeleifs = upb ;
                                       amountToSell (Person id inv ranges job _ market) item = if (item == job) 
-                                                                then Nothing
-                                                                else do { let price  = maybe 1 snd (lookup item ranges)
+                                                                then do { let price  = maybe 1 snd (lookup item ranges)
                                                                         ; let amount = ceiling $ (favorability (lookup item ranges) (lastMean market item)) * (realToFrac $ amountOf inv item)
                                                                         ; Just $ return $ Bid id item amount price
-                                                                        } ;
+                                                                        }
+                                                                else Nothing ;
                                       amountToBuy (Person id inv ranges job money market) item = if (item `elem` (needs job)) && (not $ member item ranges)
                                                                 then Nothing
                                                                 else do { let price  = maybe 1 fst (lookup item ranges)
-                                                                        ; let max    = if item `elem` (needs job) then 1 else money / (2 * price)
-                                                                        ; let amount = floor $ (max - (favorability (lookup item ranges) (lastMean market item))) * (spaceInInventory inv)
+                                                                        ; let max    = if item `elem` (needs job) then 1 else (min 1 $ price / money)
+                                                                        --; let max = 0
+                                                                        ; let amount = floor $ (abs $ max - (favorability (lookup item ranges) (lastMean market item))) * (spaceInInventory inv)
                                                                         ; Just $ return $ Bid id item amount price
                                                                         } ;
                                       }
@@ -119,9 +120,9 @@ instance ClearingHouse Market Person Commodity where
     tradeHistory (Market _ his _) = his
     updateHouse (Market _ old def) pop his = Market pop (his:old) def
     replaceAgent this [] ident = let coms = map (\(c,_) -> (c,1)) $ defaults this
-                                  in (mkDist coms) >>= (\job -> return $ Person ident (map (\(c,_) -> (c,1)) coms) (map (\(c,m) -> (c, (m * 0.8, m * 1.2))) $ defaults this) job 500 this)
+                                  in (mkDist coms) >>= (\job -> return $ Person ident (map (\(c,_) -> (c,1)) coms) (map (\(c,m) -> (c, (m * 0.8, m * 1.2))) $ defaults this) job 50 this)
     replaceAgent this supdem ident = let job = fst $ head $ reverse $ sortBy (\(_,am1) (_,am2) -> compare am1 am2) supdem
-                                      in return $ Person ident ((map (\(c,_) -> (c,0))) $ defaults this) (map (\(c,m) -> (c, (m * 0.2, m * 1.8))) $ defaults this) job 100 this
+                                      in return $ Person ident ((map (\(c,_) -> (c,0))) $ defaults this) (map (\(c,m) -> (c, (m * 0.2, m * 1.8))) $ map (\(c,_) -> (c,lastMean this c)) $ defaults this) job 150 this
     updateAgent this (Person i inv pr j m _) = return $ Person i inv pr j m this
 
 emptyPerson :: Int -> Person
@@ -137,7 +138,7 @@ doNRounds :: (RandomGen g) => Market -> Int -> Rand g Market
 doNRounds mar n = foldM (\m _ -> doRound m) mar [1..n]
 
 defaultMarket :: (RandomGen g) => Rand g Market
-defaultMarket = mkMarket 5 (map (\c -> (c,10)) allComs)
+defaultMarket = mkMarket 100 (map (\c -> (c,1)) allComs)
 
 currentPrices :: Market -> AssList Commodity Money
 currentPrices m = map (\c -> (c, lastMean m c)) allComs
@@ -155,11 +156,12 @@ formatHelper transes = map (\(c,m) -> (c, reverse m)) $ map (\c -> (c, map (mean
 gofu :: Int -> IO ()
 gofu n = do { defMark <- getStdRandom $ runRand defaultMarket
             ; test <- getStdRandom $ runRand (doNRounds defMark n)
-            --; putStrLn $ show $ map (\(c,(m:_)) -> (c,m)) $ formatHelper $ tradeHistory test
+            ; putStrLn $ show $ map (\(c,ms) -> (c,head $ reverse ms)) $ formatHelper $ tradeHistory test
             --; putStrLn $ show $ map (map (\(Transaction _ _ i _ _) -> i)) $ tradeHistory test
             ; let thing = formatHistory $ tradeHistory test
-            ; putStrLn $ seq test thing
-            --; writeFile "SimpleMarketTest.csv" $ thing
-            --; putStrLn "DONE!!!!"
-            ; putStrLn $ show $ map (\(Person _ _ _ _ m _) -> m) $ population test
+            --; putStrLn $ seq test thing
+            ; writeFile "SimpleMarketTest.csv" $ thing
+            ; putStrLn "DONE!!!!"
+            --; putStrLn $ show $ map (\(Person _ m _ _ _ _) -> m) $ population test
+            --; putStrLn $ show $ map (\(Person _ _ _ _ m _) -> m) $ population test
             }
