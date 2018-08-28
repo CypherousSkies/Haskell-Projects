@@ -47,7 +47,7 @@ failToSell :: Money -> (Money,Money) -> (Money,Money)
 failToSell mu = (\(a,b) -> (0.95 * a + 0.05 * mu, 0.95 * b + 0.05 * mu)) . changeRange 0.05
 
 logistic :: Double -> Double -> Double ->  Double
-logistic mu s x = 1 / (1 + (exp ((mu - x) / s)))
+logistic mu s x = 1 / (1 + (exp ((mu - x) / s))) + 1
 
 favorability :: Maybe (Money, Money) -> Money -> Double
 favorability (Just (a,b)) v = logistic ((b + a)/2) ((a - b)/(2 * (log ((1/0.95) - 1)))) v
