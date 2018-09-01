@@ -43,6 +43,8 @@ import System.Random
 import Libs.AssList
 import Random.Shuffle
 
+import Debug.Trace
+
 type Money  = Double
 type Mass   = Double
 type Amount = Int
@@ -186,8 +188,8 @@ class (Tradable t, Agent a t) => ClearingHouse c a t | c -> t, c -> a where
         tradeHistory :: c -> [[Transaction t]]
         updateHouse :: c -> [a] -> [Transaction t] -> c
         lastMean :: c -> t -> Money
-        lastMean c t = case tradeHistory c of [] -> defaultPrice c t
-                                              (x:_) -> maybe (defaultPrice c t) id $ turnMean t x
+        lastMean c t = case (tradeHistory c) of [] -> defaultPrice c t
+                                                (x:_) -> maybe (defaultPrice c t) id $ turnMean t x
         replaceAgent :: (RandomGen g) => c -> [(t,Amount)] -> Identifier -> Rand g a
         updateAgent :: (RandomGen g) => c -> a -> Rand g a
         doRound :: (RandomGen g) => c -> Rand g c
@@ -195,10 +197,10 @@ class (Tradable t, Agent a t) => ClearingHouse c a t | c -> t, c -> a where
                        ; let (agents,ss,bs) = (\(as,sl,bl) -> (as, concat sl, concat bl)) $ unzip3 asbp
                        ; sells <- shuffle ss
                        ; buys  <- shuffle bs
-                       ; let sortSells = sortBy (\s1 s2 -> compare (cost s1) (cost s2)) sells
-                       ; let sortBuys  = reverse $ sortBy (\b1 b2 -> compare (cost b1) (cost b2)) buys
+                       ; let sortSells = sells-- reverse $ sortBy (\s1 s2 -> compare (cost s1) (cost s2)) sells
+                       ; let sortBuys  = buys--sortBy (\b1 b2 -> compare (cost b1) (cost b2)) buys
                        ; (resolved, a') <- resolveBids sortSells sortBuys (haggle c) agents
-                       ; updatedAgents <- updateAgents resolved a'
+                       ; updatedAgents  <- updateAgents resolved a'
                        ; let transactions = lefts resolved
                        ; let excessDemand = map (\t -> (t, (sum $ map number $ filter (\bid -> t == (thing bid)) buys) - (sum $ map number $ filter (\bid -> t == (thing bid)) sells))) $ nub $ map thing (buys ++ sells)
                        ; newAgents <- mapM (\a -> if (getMoney a) <= 0 then replaceAgent c excessDemand (getID a) else return a) updatedAgents

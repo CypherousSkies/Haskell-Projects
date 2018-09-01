@@ -6,6 +6,8 @@ import Economics.Agent
 import Libs.AssList
 import Random.Dist
 
+import Debug.Trace
+
 type Components = AssList Commodity Amount
 type Recipe g = (Components, Rand g Components)
 
@@ -93,7 +95,7 @@ instance Agent Person Commodity where
     ; updatePriceBeleifs = upb
     ; amountToSell (Person id inv ranges job _ market) item = do 
         { let price  = maybe (defaultPrice market item) snd (lookup item ranges)
-        ; let amount = if (item == job) 
+        ; let amount = if (item == job)
                           then amountOf inv item
                           else ceiling $ (favorability (lookup item ranges) (lastMean market item)) * (realToFrac $ amountOf inv item)
         ; if (amount > 0) && (price > 0) then Just $ return $ Bid id item amount price else Nothing
@@ -104,7 +106,8 @@ instance Agent Person Commodity where
                                                                         { let price  = maybe (defaultPrice market item) fst (lookup item ranges)
                                                                         ; let top    = if item `elem` (needs job) then 1 + (favorability (lookup item ranges) (lastMean market item)) else (min 0.5 $ money / price)
                                                                         ; let amount = floor $ (top - (favorability (lookup item ranges) (lastMean market item))) * ((spaceInInventory (Person id inv ranges job money market)) / (unit_mass item))
-                                                                        ; if (amount > 0) && (price > 0) then Just $ return $ Bid id item amount price else Nothing 
+                                                                        ; let bool = (amount > 0) && (price > 0)
+                                                                        ; if bool then Just $ return $ Bid id item amount price else Nothing 
                                                                         }
     }
 instance Show Person where
@@ -130,7 +133,7 @@ instance ClearingHouse Market Person Commodity where
                                   in do
                                       { job <- mkDist coms
                                       ; p <- liftRand $ randomR (0.05,0.5)
-                                      ; return $ Person ident (map (\(c,_) -> (c,1)) coms) (map (\(c,m) -> (c, (m * (1-p), m * (1+p)))) $ defaults this) job 100 this
+                                      ; return $ Person ident (map (\(c,_) -> (c,0)) coms) (map (\(c,m) -> (c, (m * (1-p), m * (1+p)))) $ defaults this) job 100 this
                                       }
     replaceAgent this supdem ident = let job = fst $ head $ reverse $ sortBy (\(_,am1) (_,am2) -> compare am1 am2) supdem
                                       in return $ Person ident ((map (\(c,_) -> (c,0))) $ defaults this) (map (\(c,m) -> (c, (m * 0.2, m * 1.8))) $ map (\(c,v) -> (c, if v /= 0 then v else maybe 1 id (lookup c $ defaults this))) $ map (\(c,_) -> (c,lastMean this c)) $ defaults this) job 150 this
@@ -149,7 +152,10 @@ doNRounds :: (RandomGen g) => Market -> Int -> Rand g Market
 doNRounds mar n = foldM (\m _ -> doRound m) mar [1..n]
 
 defaultMarket :: (RandomGen g) => Rand g Market
-defaultMarket = mkMarket 100 (map (\c -> (c,10)) allComs)
+defaultMarket = do
+    { vs <- mapM (\c -> liftRand $ randomR (1.0,20.0)) allComs
+    ; mkMarket 100 (zip allComs vs)
+    }
 
 currentPrices :: Market -> AssList Commodity Money
 currentPrices m = map (\c -> (c, lastMean m c)) allComs
@@ -183,16 +189,3 @@ gofu n market = do { test <- getStdRandom $ runRand (doNRounds market n)
                    --; putStrLn $ show $ map (\(Person _ _ _ j m _) -> (showjob j, m)) $ population test --Print Money
                    ; return test
                    }
-
-trials :: IO Market -> IO ()
-trials market = do { market' <- market
-                   ; asbp <- getStdRandom $ runRand $ mapM doTurn $ getAgents market'
-                   ; let (agents,sells,buys) = (\(as,sl,bl) -> (as, concat sl, concat bl)) $ unzip3 asbp
-                   ; let sortSells = sortBy (\s1 s2 -> compare (cost s1) (cost s2)) sells
-                   ; let sortBuys  = reverse $ sortBy (\b1 b2 -> compare (cost b1) (cost b2)) buys
-                   ; putStrLn $ show $ take 10 $ filter (\(Bid _ t _ _) -> t == Food) sortSells
-                   ; putStrLn $ show $ take 10 $ filter (\(Bid _ t _ _) -> t == Food) sortBuys
-                   }
-
-main :: IO ()
-main = trials start
