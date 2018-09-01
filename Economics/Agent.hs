@@ -50,7 +50,7 @@ type Mass   = Double
 type Amount = Int
 type Identifier = Int
 
-class (Eq a) => Tradable a where
+class (Eq a,Show a) => Tradable a where
     unit_mass :: a -> Mass
     recipes :: RandomGen g => a -> [( AssList a Amount , Rand g (AssList a Amount) )]
     needs :: a -> [a]
@@ -197,8 +197,8 @@ class (Tradable t, Agent a t) => ClearingHouse c a t | c -> t, c -> a where
                        ; let (agents,ss,bs) = (\(as,sl,bl) -> (as, concat sl, concat bl)) $ unzip3 asbp
                        ; sells <- shuffle ss
                        ; buys  <- shuffle bs
-                       ; let sortSells = sells-- reverse $ sortBy (\s1 s2 -> compare (cost s1) (cost s2)) sells
-                       ; let sortBuys  = buys--sortBy (\b1 b2 -> compare (cost b1) (cost b2)) buys
+                       ; let sortSells = sortBy (\s1 s2 -> compare (cost s1) (cost s2)) sells
+                       ; let sortBuys  = reverse $ sortBy (\b1 b2 -> compare (cost b1) (cost b2)) buys
                        ; (resolved, a') <- resolveBids sortSells sortBuys (haggle c) agents
                        ; updatedAgents  <- updateAgents resolved a'
                        ; let transactions = lefts resolved
