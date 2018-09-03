@@ -146,7 +146,7 @@ resolveBids (s:ss) bs f as = let sHas = maybe 0 id $ do { sa <- (getByID as (bid
                                                    { let (rtrans, mbb) = f s' buy
                                                    ; rt <- rtrans
                                                    ; let ss' = (maybe ss (\(bid,isSell) -> if isSell then bid:ss else ss) mbb)
-                                                   ; let bs' = (maybe ss (\(bid,isSell) -> if isSell then b' else bid:b') mbb) \\ [buy]
+                                                   ; let bs' = (maybe ss (\(bid,isSell) -> if isSell then b' else bid:b') mbb) \\ (buy:[])
                                                    ; let mas =  do { sa <- getByID as (bidder s')
                                                                    ; ba <- getByID as (bidder buy)
                                                                    ; let charge = (realToFrac $ quantity rt) * (unit_price rt) 
@@ -154,13 +154,11 @@ resolveBids (s:ss) bs f as = let sHas = maybe 0 id $ do { sa <- (getByID as (bid
                                                                    ; let sa' = replaceInventory saM $ adjust (\n -> n - (quantity rt)) (thing s') (getInventory sa)
                                                                    ; let baM = replaceMoney sa ((getMoney ba) - charge)
                                                                    ; let ba' = replaceInventory baM $ adjust (\n -> n - (quantity rt)) (thing s') (getInventory sa)
-                                                                   ; return $ sa' : ba' : (as \\ [sa,ba])
+                                                                   ; return $ sa' : ba' : (as \\ (sa:ba:[]))
                                                                    }
                                                    ; case mas of
                                                        Just as' -> (resolveBids ss bs' f as') >>= (\(rb, as'') -> return ((Left rt) : rb, as''))
-                                                       Nothing -> if isNothing (getByID as (bidder s'))
-                                                                       then resolveBids ss bs f as
-                                                                       else resolveBids ss (bs \\ [buy]) f as
+                                                       Nothing -> resolveBids ss bs f as
                                                    }
                                                Nothing -> resolveBids ss (bs \\ b') f as
                                 else do { (rb, as) <- resolveBids ss bs f as
