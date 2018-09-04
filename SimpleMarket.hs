@@ -59,6 +59,9 @@ favorability :: Maybe (Money, Money) -> Money -> Double
 favorability Nothing _ = 0
 favorability (Just (a,b)) v = if a == b then 0.5 else logistic ((b + a)/2) ((a - b) / 8) v
 
+significant :: Double
+significant = 0.25
+
 upb :: (RandomGen g) => Person -> Either (Transaction Commodity) (Bid Commodity) -> Rand g Person
 upb (Person id inv ranges job money market) (Left (Transaction _ _ item _ _)) = return $ Person id inv (update (\r -> Just (succSell (lastMean market item) r)) item ranges) job money market
 upb (Person id inv ranges job money market) (Right (Bid _ item amount _))     = do
