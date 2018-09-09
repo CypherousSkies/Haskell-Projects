@@ -196,6 +196,7 @@ gofu n market = do { test <- getStdRandom $ runRand (doNRounds market n)
 
 main = do
     { begin <- start
-    ; m0 <- gofu 10 begin
+    ; m0 <- gofu 100 begin
     ; printMarket m0
+    ; writeFile "MarketTest.csv" $ formatHistory $ tradeHistory m0
     }
