@@ -97,21 +97,25 @@ instance Agent Person Commodity where
     ; estimateValue (Person _ _ pr _ _ m) c = return $ (\(a,b) -> (a + b) / 2) $ maybe (0,defaultPrice m c) id $ lookup c pr
     ; updatePriceBeleifs = upb
     ; amountToSell (Person id inv ranges job _ market) item = do 
-        { let price  = maybe (defaultPrice market item) snd (lookup item ranges)
-        ; let amount = min 1 $ if (item == job)
-                          then amountOf inv item
-                          else if item `elem` (needs job) then 0 else ceiling $ (favorability (lookup item ranges) (lastMean market item)) * (realToFrac $ amountOf inv item)
-        ; if (amount > 0) && (price > 0) then Just $ return $ Bid id item amount price else Nothing
+        { let amount = if (item == job)
+                          then max 1 $ amountOf inv item
+                          else if item `elem` (needs job) then 0 else max 1 $ ceiling $ (favorability (lookup item ranges) (lastMean market item)) * (realToFrac $ amountOf inv item)
+        ; Just $ do
+            { price <- maybe (return $ defaultPrice market item) (\r -> liftRand $ randomR r) (lookup item ranges)
+            ; return $ Bid id item amount price
+            }
         }
     ; amountToBuy (Person id inv ranges job money market) item = if (item `elem` (needs job)) && (not $ member item ranges)
                                                                     then Nothing
                                                                     else do
-                                                                        { let price  =  maybe (defaultPrice market item) fst (lookup item ranges)
-                                                                        ; let top    = if item `elem` (needs job) then 1 else 0.5
-                                                                        ; let fav    = top * (1 - (favorability (lookup item ranges) (lastMean market item))) 
-                                                                        ; let amount = min 1 $ if item `elem` (needs job) then 0 else floor $ fav * ((spaceInInventory (Person id inv ranges job money market)) / (unit_mass item))
-                                                                        ; let bool = (amount > 0) && (price > 0)
-                                                                        ; if bool then Just $ return $ Bid id item amount price else Nothing 
+                                                                        { let top    = if item `elem` (needs job) then 1 else 0.5
+                                                                        ; let fav    = top * (1 - (favorability (lookup item ranges) (lastMean market item)))
+                                                                        ; let space  = (spaceInInventory (Person id inv ranges job money market)) / (unit_mass item)
+                                                                        ; let amount = if item `elem` (needs job) then 0 else max 1 $ floor $ fav * space
+                                                                        ; Just $ do 
+                                                                            { price <- maybe (return $ defaultPrice market item) (\r -> liftRand $ randomR r) (lookup item ranges)
+                                                                            ; return $ Bid id item amount price
+                                                                            }
                                                                         }
     }
 instance Show Person where
@@ -139,7 +143,7 @@ instance ClearingHouse Market Person Commodity where
                                       ; p <- liftRand $ randomR (0.05,0.2)
                                       ; return $ Person ident (map (\(c,_) -> (c,1)) coms) (map (\(c,m) -> (c, (m * (1-p), m * (1+p)))) $ defaults this) job 100 this
                                       }
-    replaceAgent this supdem ident = let job = fst $ head $ reverse $ sortBy (\(_,am1) (_,am2) -> compare am1 am2) supdem
+    replaceAgent this supdem ident = let job = (\x -> trace ("New " ++ (showjob x)) x) $ fst $ head $ reverse $ sortBy (\(_,am1) (_,am2) -> compare am1 am2) supdem
                                       in return $ Person ident ((map (\(c,_) -> (c,0))) $ defaults this) (map (\(c,m) -> (c, (m * 0.2, m * 1.8))) $ map (\(c,v) -> (c, if v /= 0 then v else maybe 1 id (lookup c $ defaults this))) $ map (\(c,_) -> (c,lastMean this c)) $ defaults this) job 150 this
     updateAgent this (Person i inv pr j m _) = return $ Person i inv pr j m this
 
@@ -153,12 +157,12 @@ allComs :: [Commodity]
 allComs = [Food,Wood,Ore,Metal,Tool]
 
 doNRounds :: (RandomGen g) => Market -> Int -> Rand g Market
-doNRounds mar n = foldM (\m _ -> doRound m) mar [1..n]
+doNRounds mar n = foldM (\m n -> trace (seq m ("Round " ++ (show n))) doRound m) mar [1..n]
 
 defaultMarket :: (RandomGen g) => Rand g Market
 defaultMarket = do
-    { vs <- mapM (\c -> liftRand $ randomR (1.0,20.0)) allComs
-    ; mkMarket 100 (zip allComs vs)
+    { vs <- mapM (\c -> liftRand $ randomR (10.0,20.0)) allComs
+    ; mkMarket 500 (zip allComs vs)
     }
 
 currentPrices :: Market -> AssList Commodity Money
@@ -196,7 +200,7 @@ gofu n market = do { test <- getStdRandom $ runRand (doNRounds market n)
 
 main = do
     { begin <- start
-    ; m0 <- gofu 100 begin
+    ; m0 <- gofu 500 begin
     ; printMarket m0
     ; writeFile "MarketTest.csv" $ formatHistory $ tradeHistory m0
     }
