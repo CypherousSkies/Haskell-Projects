@@ -129,7 +129,7 @@ instance Agent Person Commodity where
                                                                         }
     }
 instance Show Person where
-    show (Person i _ _ j _ _) = "Person #" ++ (show i) ++ " the " ++ (show j) ++ " producer\n"
+    show (Person i _ _ j _ _) = "Person #" ++ (show i) ++ " the " ++ (showjob j)
 
 data Market = Market { population :: [Person]
                      , history :: [[Transaction Commodity]]
@@ -156,9 +156,10 @@ instance ClearingHouse Market Person Commodity where
                                       ; p <- liftRand $ randomR (0.05,0.2)
                                       ; return $ Person ident (map (\(c,_) -> (c,1)) coms) (map (\(c,m) -> (c, (m * (1-p), m * (1+p)))) $ defaults this) job 100 this
                                       }
-    replaceAgent this supdem ident = let job = (\x -> trace ("New " ++ (showjob x)) x) $ fst $ head $ reverse $ sortBy (\(_,am1) (_,am2) -> compare am1 am2) $ map (\(t,x) -> (t,(realToFrac x) * (defaultPrice this t))) supdem
+    replaceAgent this supdem ident = let dist = reverse $ sortBy (\(_,am1) (_,am2) -> compare am1 am2) $ map (\(t,x) -> (t,(realToFrac x) * (defaultPrice this t))) supdem
                                       in do
-                                          { p <- liftRand $ randomR (0.1,0.2)
+                                          { job <- mkDist dist 
+                                          ; p <- trace ("New " ++ (showjob job)) $ liftRand $ randomR (0.01,0.5)
                                           ; let inv = (map (\(c,_) -> (c,1))) $ defaults this
                                           ; let ranges = map (\(c,m) -> (c, (m * (1-p), m * (1+p)))) $ map (\(c,v) -> (c, if v /= 0 then v else maybe 1 id (lookup c $ defaults this))) $ map (\(c,_) -> (c,lastMean this c)) $ defaults this  
                                           ; return $ Person ident inv ranges job 500 this
@@ -179,7 +180,7 @@ doNRounds mar n = foldM (\m n -> trace (seq m ("Round " ++ (show n))) doRound m)
 
 defaultMarket :: (RandomGen g) => Int -> Rand g Market
 defaultMarket n = do
-    { vs <- mapM (\c -> liftRand $ randomR (15.0,20.0)) allComs
+    { vs <- mapM (\c -> liftRand $ randomR (5.0,20.0)) allComs
     ; mkMarket n (zip allComs vs)
     }
 
@@ -187,7 +188,7 @@ currentPrices :: Market -> AssList Commodity Money
 currentPrices m = map (\c -> (c, lastMean m c)) allComs
 
 hist :: Market -> String
-hist m = foldl' (\acc b -> acc ++ b ++ "\n") "" $ map (\(t,l) -> (show t) ++ ", " ++ (foldl' (\acc b -> acc ++ ", " ++ (show b)) "" l)) $ map (\t -> (t, maybe [] id $ mapM (lookup t) $ means m)) allComs
+hist m = foldl' (\acc b -> acc ++ b ++ "\n") "" $ map (\(t,l) -> (show t) ++ ", " ++ (foldl' (\acc b -> acc ++ ", " ++ (show b)) "" l)) $ map (\t -> (t, reverse $ maybe [] id $ mapM (lookup t) $ means m)) allComs
 
 printMarket :: Market -> IO ()
 printMarket test = putStrLn $ hist test
@@ -217,6 +218,5 @@ main = do
     ; begin <- start $ read n
     ; m0 <- gofu (read t) begin
     ; printMarket m0
-    ; putStrLn $ show $ map price_ranges $ getAgents m0
     ; writeFile "MarketTest.csv" $ hist m0
     }

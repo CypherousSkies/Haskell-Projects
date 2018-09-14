@@ -217,5 +217,5 @@ class (Tradable t, Agent a t) => ClearingHouse c a t | c -> t, c -> a where
                        ; newAgents <- mapM (\a -> if (getMoney a) <= 0 then replaceAgent c excessDemand (getID a) else return a) updatedAgents
                        ; let uh = updateHouse c newAgents transactions
                        ; newAgents' <- trace (show $ 100 * (realToFrac $ length transactions) / (realToFrac $ length resolved)) $ mapM (\a -> updateAgent uh a) newAgents
-                       ; return $ updateHouse c newAgents' transactions
+                       ; return $ (\k -> trace (show $ map (\t -> (t,lastMean k t)) coms) k) $ updateHouse c newAgents' transactions
                        }
