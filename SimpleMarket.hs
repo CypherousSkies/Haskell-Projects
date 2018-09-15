@@ -48,12 +48,13 @@ changeRange p (a, b) = shiftByPercent p (0.5 * (b - a)) (a, b)
 succSell :: Money -> (Money,Money) -> (Money,Money)
 succSell mu r = if mu `inside` r then r else changeRange (0.05) r
 
-inside :: Real a => a -> (a,a) -> Bool
+inside :: Ord a => a -> (a,a) -> Bool
 inside x (a, b) = a <= x && x <= b
 
 failToSell :: RandomGen g => Money -> (Money,Money) -> Money -> Rand g (Money,Money)
 failToSell mu r has = do 
-    { p <- liftRand $ randomR (-0.2, 0)
+    { let urgency =  0.1 + 0.9 * mu / (has * has + mu)
+    ; p <- liftRand $ randomR (-urgency, 0)
     ; return $ if mu `inside` r then r else shiftByPercent p mu $ changeRange p r
     }
 
@@ -65,13 +66,20 @@ favorability :: Maybe (Money, Money) -> Money -> Double
 favorability Nothing _ = 0
 favorability (Just (a,b)) v = if a == b then 0.5 else logistic ((b + a)/2) (abs $ (a - b) / 8) v
 
-significant :: Double
-significant = 0.25
-
+fixRange :: AssList Commodity (Money,Money) -> Commodity -> (Money, Money) -> (Money,Money)
+fixRange _ _ = id
+    {-fixRange ranges item (r0,r1) = let prodCost = sum $ map (\t -> maybe 0 (\(a,b) -> (a+b)/2) $ lookup t ranges) $ needs item 
+                                   mu = (r0+r1)/2
+                                   del = (r1 - mu)/mu
+                                   mu' = mu + del * (prodCost - mu)
+                                in if prodCost < mu
+                                     then (r0,r1)
+                                     else (mu' * del, mu' * (1 + del))
+-}
 upb :: (RandomGen g) => Person -> Either (Transaction Commodity) (Bid Commodity) -> Rand g Person
-upb (Person id inv ranges job money market) (Left (Transaction _ _ item _ _)) = return $ Person id inv (update (\r -> Just (succSell (lastMean market item) r)) item ranges) job money market
+upb (Person id inv ranges job money market) (Left (Transaction _ _ item _ _)) = return $ Person id inv (update (\r -> Just (fixRange ranges item $ succSell (lastMean market item) r)) item ranges) job money market
 upb (Person id inv ranges job money market) (Right (Bid _ item amount _))     = do
-    { r' <- mapM (\(c,r) -> if c == item then (failToSell (lastMean market item) r money) >>= (\k -> return (c,k)) else return (c,r)) ranges
+    { r' <- mapM (\(c,r) -> if c == item then (failToSell (lastMean market item) r money) >>= (\k -> return (c,fixRange ranges item k)) else return (c,r)) ranges
     ; return $ Person id inv r' job money market
     }
 
@@ -80,6 +88,16 @@ inventoryMass inv = sum $ map (\(c,a) -> (realToFrac a) * (unit_mass c)) inv
 
 amountOf :: AssList Commodity Amount -> Commodity -> Amount
 amountOf inv item = sum $ map snd $ filter (\(i,_) -> i == item) inv
+
+invMax :: Mass
+invMax = 20
+
+idealAmount :: Commodity -> Commodity -> Amount
+idealAmount job item
+  | job == item = 0
+  | item `elem` (needs job) && item /= Tool = ceiling $ invMax * 0.75 / (realToFrac $ length $ needs job)
+  | item == Tool && job /= Tool = 1
+  | otherwise = floor $ invMax * 0.25 / 4
 
 type Inventory = AssList Commodity Amount
 
@@ -99,30 +117,33 @@ instance Agent Person Commodity where
     ; getMoney a = money a
     ; replaceInventory (Person id _ pr j mon mar) inv = Person id inv pr j mon mar
     ; replaceMoney (Person id inv pr j _ mar) money = Person id inv pr j money mar
-    ; spaceInInventory a = realToFrac $ 10 - (inventoryMass $ getInventory a)
-    ; estimateValue (Person _ _ pr _ _ m) c = return $ (\(a,b) -> (a + b) / 2) $ maybe (0,defaultPrice m c) id $ lookup c pr
+    ; spaceInInventory a = (realToFrac $ invMax) - (inventoryMass $ getInventory a)
+    ; estimateValue (Person _ _ ranges _ _ market) item = do
+        { v <- maybe (return $ defaultPrice market item) (\r -> liftRand $ randomR r) (lookup item ranges) 
+        ; return $ max 0.01 v 
+        }
     ; updatePriceBeleifs = upb
     ; amountToSell (Person id inv ranges job money market) item = do 
         { let fav = favorability (lookup item ranges) (lastMean market item)
         ; let top = if item `elem` (needs job) then 0.25 else 1
-        ; let space = realToFrac $ amountOf inv item 
+        ; let space = realToFrac $ (amountOf inv item) - (idealAmount job item)
         ; let amount = if (item == job)
-                          then ceiling $ (min 1 (0.25 + fav)) * space
-                          else ceiling $ top * fav * space
+                          then floor $ (min 1 (0.25 + fav)) * space
+                          else floor $ top * fav * space
         ; Just $ do
-            { price <- maybe (return $ defaultPrice market item) (\r -> liftRand $ randomR r) (lookup item ranges)
+            { price <- estimateValue (Person id inv ranges job money market) item 
             ; return $ Bid id item amount price
             }
         }
-    ; amountToBuy (Person id inv ranges job money market) item = if (item `elem` (needs job)) && (not $ member item ranges)
+    ; amountToBuy (Person id inv ranges job money market) item = if (not $ member item ranges)
                                                                     then Nothing
                                                                     else do
                                                                         { let top    = if item `elem` (needs job) then 1 else 0.5
                                                                         ; let fav    = top * (1 - (favorability (lookup item ranges) (lastMean market item)))
-                                                                        ; let space  = (spaceInInventory (Person id inv ranges job money market)) / (unit_mass item)
-                                                                        ; let amount = floor $ fav * space --if item `elem` (needs job) && item /= Tool then max 1 $ floor $ fav * space else floor $ fav * space
+                                                                        ; let space  = (spaceInInventory (Person id inv ranges job money market)) / (unit_mass item) - (realToFrac $ idealAmount job item)
+                                                                        ; let amount = ceiling $ fav * space --if item `elem` (needs job) && item /= Tool then max 1 $ floor $ fav * space else floor $ fav * space
                                                                         ; Just $ do 
-                                                                            { price <- maybe (return $ defaultPrice market item) (\r -> liftRand $ randomR r) (lookup item ranges)
+                                                                            { price <- estimateValue (Person id inv ranges job money market) item 
                                                                             ; let a' = min amount $ floor $ money / price
                                                                             ; return $ Bid id item a' price
                                                                             }
@@ -217,6 +238,6 @@ main = do
     ; t <- getLine
     ; begin <- start $ read n
     ; m0 <- gofu (read t) begin
-    ; printMarket m0
+    --; printMarket m0
     ; writeFile "MarketTest.csv" $ hist m0
     }
