@@ -19,7 +19,7 @@ values = map snd
 
 adjust :: Eq k => (v -> v) -> k -> AssList k v -> AssList k v
 adjust _ _ [] = []
-adjust f k ((k1,v):ks) = if k == k1 then (k,f v):ks else (k1,v):ks
+adjust f k ((k1,v):ks) = if k == k1 then (k,f v):ks else (k1,v):(adjust f k ks)
 
 update :: Eq k => (v -> Maybe v) -> k -> AssList k v -> AssList k v
 update _ _ [] = []

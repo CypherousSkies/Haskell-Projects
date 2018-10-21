@@ -24,6 +24,7 @@ module Economics.Agent
               ,doTurn
               )
         ,ClearingHouse(getAgents
+                      ,getAgentByID
                       ,haggle
                       ,defaultPrice
                       ,tradeHistory
@@ -122,23 +123,26 @@ getByID (x:xs) i = if (getID x) == i then Just x else getByID xs i
 amountOf :: (Tradable t) => AssList t Amount -> t -> Amount
 amountOf inv item = sum $ map snd $ filter (\(i,_) -> i == item) inv
 
-eligableBuyer :: (Tradable t, Agent a t) => [Bid t] -> Amount -> [a] -> Maybe (Bid t)
+eligableBuyer :: (Tradable t, Agent a t) => [Bid t] -> (t, Amount) -> [a] -> Maybe (Bid t)
 eligableBuyer [] _ _ = Nothing
-eligableBuyer (buy:bs) sell as = do
+eligableBuyer (buy:bs) (c, sell) as = do
     { buyer <- getByID as $ bidder buy
     ; let amount = realToFrac $ min (number buy) sell 
     ; let charge = (cost buy) * amount
-    ; if ((getMoney buyer) > charge) && ((spaceInInventory buyer) >= (amount * (unit_mass $ thing buy))) then Just buy else eligableBuyer bs sell as
+    ; let isSame = (thing buy) == c
+    ; let hasFunds = True --(getMoney buyer) > charge
+    ; let hasSpace = True --(realToFrac $ spaceInInventory buyer) >= (realToFrac $ amount * (unit_mass $ thing buy)) 
+    ; if isSame && hasFunds && hasSpace then Just buy else eligableBuyer bs (c,sell) as
     }
 
 resolveBids :: (Tradable t, Agent a t, RandomGen g) => [Bid t] -> [Bid t] -> (Bid t -> Bid t -> Rand g (Transaction t, Maybe (Bid t, Bool))) -> [a] -> Rand g ([Either (Transaction t) (Bid t)], [a])
 resolveBids [] l _ as = return (map (\b -> (Right b)) l, as)
 resolveBids l [] f as = resolveBids [] l f as
 resolveBids (s:ss) bs f as = case max 0 $ min (number s) $ maybe 0 id $ (getByID as (bidder s)) >>= (\sa -> return $ amountOf (getInventory sa) (thing s)) of
-                               0 -> resolveBids ss bs f as
-                               num -> case filter (\b -> (thing b) == (thing s)) bs of
-                                        []  -> (resolveBids ss bs f as) >>= (\(rest, as') -> return $ ((Right $ Bid (bidder s) (thing s) (max num $ number s) (cost s)) : rest, as'))
-                                        (buy:nbs) -> do
+                               0 -> trace "Failure due to no goods" $ resolveBids ss bs f as
+                               num -> case eligableBuyer bs (thing s, number s) as of --filter (\b -> (thing b) == (thing s)) bs of
+                                        Nothing -> trace ("Failure due to lack of eligable buyers " ++ (show $ thing s)) $ (resolveBids ss bs f as) >>= (\(rest, as') -> return $ ((Right $ Bid (bidder s) (thing s) (min num $ number s) (cost s)) : rest, as'))
+                                        Just buy -> do
                                             { let s' = Bid (bidder s) (thing s) (max num $ number s) (cost s)
                                             ; (transaction, mayBidBool) <- f s' buy
                                             ; let mbb = mayBidBool >>= (\(bid,bool) -> if ((number bid) <= 0) && ((cost bid) <= 0) then Nothing else Just (bid,bool))
@@ -150,16 +154,17 @@ resolveBids (s:ss) bs f as = case max 0 $ min (number s) $ maybe 0 id $ (getByID
                                                 ; return (sa,ba)
                                                 }
                                             ; let mas = case saba of
-                                                          Nothing -> Nothing
+                                                          Nothing -> trace "Agents not found" $ Nothing
                                                           Just (sa,ba) -> do
                                                               { let bm = getMoney ba
                                                               ; let sm = getMoney sa
                                                               ; let bi = getInventory ba
                                                               ; let si = getInventory sa
-                                                              ; let amount = quantity transaction
-                                                              ; let ting = thing s
-                                                              ; baM <- if bm < charge then Nothing else Just $ replaceMoney ba $ bm - charge
-                                                              ; ba' <- if (spaceInInventory baM) < (realToFrac amount) then Nothing else Just $ replaceInventory baM $ adjust (\n -> n + amount) ting bi
+                                                              ; let ting = thing s 
+                                                              ; let amount = quantity transaction 
+                                                              ; let mass = (unit_mass ting) * (realToFrac $ amount) 
+                                                              ; baM <- if bm < charge then trace "Buyer has no money" $ Nothing else Just $ replaceMoney ba $ bm - charge
+                                                              ; ba' <- if (spaceInInventory baM) < mass then trace ("Buyer has no space" ++ (show $ spaceInInventory baM)) $ Nothing else Just $ replaceInventory baM $ adjust (\n -> n + amount) ting bi
                                                               ; saM <- Just $ replaceMoney sa $ sm + charge
                                                               ; sa' <- Just $ replaceInventory saM $ adjust (\n -> n - amount) ting si
                                                               ; return $ sa' : ba' : (as \\ [sa,ba])
@@ -167,12 +172,12 @@ resolveBids (s:ss) bs f as = case max 0 $ min (number s) $ maybe 0 id $ (getByID
                                             ; case mas of
                                                 Just as' -> (resolveBids ss bs' f as') >>= (\(rb,as'') -> return ((Left transaction) : rb, as''))
                                                 Nothing  -> if isNothing saba
-                                                               then resolveBids ss bs f as
+                                                               then trace "Failure to resolve due to unfindable agent" $ resolveBids ss bs f as
                                                                else do
-                                                                   { (etb, as') <- resolveBids [s] nbs f as
-                                                                   ; let nbs' = nbs \\ (rights etb)
-                                                                   ; (etb',as'') <- resolveBids ss (bs \\ nbs') f as'
-                                                                   ; return $ (etb ++ etb', as'')
+                                                                   { let nbs = trace "Failure due to incompatable buyer" $ bs \\ [buy]
+                                                                   ; (etb, as') <- resolveBids (s:ss) nbs f as
+                                                                   ; let etbf = etb
+                                                                   ; return $ (etbf, as')
                                                                    }
                                             } 
 
@@ -188,10 +193,10 @@ turnMean t l = let items  = filter (\ti -> (item ti) == t) l
                    weight = sum $ map (\(x,am) -> (realToFrac x) * (realToFrac am)) pairs
                 in if total <= 0 then Nothing else Just $ weight / total
 
-class (Tradable t, Agent a t) => ClearingHouse c a t | c -> t, c -> a where
+class (Tradable t, Agent a t) => ClearingHouse c a t | c -> a, c -> t where
         getAgents :: c -> [a]
         getAgentByID :: c -> Identifier -> Maybe a
-        getAgentByID c = getByID (getAgents c)
+        getAgentByID c id = getByID (getAgents c) id
         haggle :: (RandomGen g) => c -> Bid t -> Bid t -> Rand g (Transaction t, Maybe (Bid t, Bool)) -- -> sell -> buy; If bool is true, then is a SELL
         defaultPrice :: c -> t -> Money
         tradeHistory :: c -> [[Transaction t]]
@@ -214,8 +219,8 @@ class (Tradable t, Agent a t) => ClearingHouse c a t | c -> t, c -> a where
                        ; let transactions = lefts resolved --filter (\t -> ((quantity t) > 0) && ((unit_price t) > 0)) $ lefts resolved
                        ; let demandSupply = map (\t -> (t, (sum $ map number $ filter (\bid -> t == (thing bid)) buys) , (sum $ map number $ filter (\bid -> t == (thing bid)) sells))) $ nub $ map thing (buys ++ sells)
                        ; let excessDemand = map (\(t,d,s) -> (t, d - s)) demandSupply
-                       ; newAgents <- mapM (\a -> if (getMoney a) <= 0 then replaceAgent c excessDemand (getID a) else return a) updatedAgents
-                       ; let uh = updateHouse c newAgents transactions
-                       ; newAgents' <- trace (show $ 100 * (realToFrac $ length transactions) / (realToFrac $ length resolved)) $ mapM (\a -> updateAgent uh a) newAgents
+                       ; newAgents <- mapM (\a -> if (spaceInInventory a) < 0 || (getMoney a) <= (foldl (\a t -> max a (lastMean c t)) 0 coms) then replaceAgent c excessDemand (getID a) else return a) updatedAgents
+                       ; let uh = trace ("Number of Bids: " ++ (show $ length $ buys ++ sells) ++ " Buys: " ++ (show $ length buys) ++ " Sells: " ++ (show $ length sells)) $ updateHouse c newAgents transactions
+                       ; newAgents' <- trace ((show $ 100 * (realToFrac $ length transactions) / (realToFrac $ length resolved)) ++ "% of " ++ (show $ length resolved)) $ mapM (\a -> updateAgent uh a) newAgents
                        ; return $ (\k -> trace (show $ map (\t -> (t,lastMean k t)) coms) k) $ updateHouse c newAgents' transactions
                        }
